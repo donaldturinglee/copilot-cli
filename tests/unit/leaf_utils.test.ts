@@ -447,10 +447,10 @@ describe('Step 0.3 — Pure helpers, parsing, formatting & environment utilities
       }),
     ).toBe(800000)
 
-    const prevScrub = process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
+    const prevScrub = process.env.COPILOT_CLI_SUBPROCESS_ENV_SCRUB
     const prevKey = process.env.ANTHROPIC_API_KEY
     try {
-      process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
+      process.env.COPILOT_CLI_SUBPROCESS_ENV_SCRUB = '1'
       process.env.ANTHROPIC_API_KEY = 'sk-secret'
       registerUpstreamProxyEnvFn(() => ({ HTTPS_PROXY: 'http://127.0.0.1:8080' }))
       const sub = subprocessEnv()
@@ -458,8 +458,8 @@ describe('Step 0.3 — Pure helpers, parsing, formatting & environment utilities
       expect(sub.HTTPS_PROXY).toBe('http://127.0.0.1:8080')
     } finally {
       if (prevScrub === undefined)
-        delete process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
-      else process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = prevScrub
+        delete process.env.COPILOT_CLI_SUBPROCESS_ENV_SCRUB
+      else process.env.COPILOT_CLI_SUBPROCESS_ENV_SCRUB = prevScrub
       if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY
       else process.env.ANTHROPIC_API_KEY = prevKey
       registerUpstreamProxyEnvFn(() => ({}))

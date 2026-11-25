@@ -141,7 +141,7 @@ export type MacroValues = {
 }
 
 export const DEFAULT_MACROS: MacroValues = {
-  VERSION: '0.1.0',
+  VERSION: '0.0.1',
   BUILD_TIME: '',
   FEEDBACK_CHANNEL: '',
   ISSUES_EXPLAINER: 'report the issue via the project issue tracker',

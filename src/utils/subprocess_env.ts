@@ -2,7 +2,7 @@ import { isEnvTruthy } from './env_utils.js'
 
 const GHA_SUBPROCESS_SCRUB = [
   'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
+  'COPILOT_CLI_OAUTH_TOKEN',
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_FOUNDRY_API_KEY',
   'ANTHROPIC_CUSTOM_HEADERS',
@@ -37,7 +37,7 @@ export function registerUpstreamProxyEnvFn(
 export function subprocessEnv(): NodeJS.ProcessEnv {
   const proxyEnv = upstreamProxyEnvProvider?.() ?? {}
 
-  if (!isEnvTruthy(process.env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB)) {
+  if (!isEnvTruthy(process.env.COPILOT_CLI_SUBPROCESS_ENV_SCRUB)) {
     return Object.keys(proxyEnv).length > 0
       ? { ...process.env, ...proxyEnv }
       : process.env

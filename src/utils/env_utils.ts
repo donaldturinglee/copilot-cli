@@ -42,7 +42,7 @@ export function isEnvDefinedFalsy(
 
 export function isBareMode(): boolean {
   return (
-    isEnvTruthy(process.env.CLAUDE_CODE_SIMPLE) ||
+    isEnvTruthy(process.env.COPILOT_CLI_SIMPLE) ||
     process.argv.includes('--bare')
   )
 }

@@ -87,11 +87,11 @@ describe('Step 0.1 — MACRO globals & feature flags', () => {
 describe('Step 0.2 — Leaf constants & branded IDs/permissions', () => {
   afterEach(() => {
     setCompatSessionIdTranslator(undefined)
-    delete process.env.CLAUDE_CODE_OVERRIDE_DATE
+    delete process.env.COPILOT_CLI_OVERRIDE_DATE
   })
 
-  test('common date helpers honor CLAUDE_CODE_OVERRIDE_DATE', () => {
-    process.env.CLAUDE_CODE_OVERRIDE_DATE = '2026-03-15'
+  test('common date helpers honor COPILOT_CLI_OVERRIDE_DATE', () => {
+    process.env.COPILOT_CLI_OVERRIDE_DATE = '2026-03-15'
     expect(getLocalIsoDate()).toBe('2026-03-15')
     expect(getLocalMonthYear()).toContain('2026')
   })

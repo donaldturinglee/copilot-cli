@@ -4,8 +4,8 @@ import memoize from 'lodash-es/memoize.js'
  * Returns the local calendar date in ISO format (YYYY-MM-DD).
  */
 export function getLocalIsoDate(): string {
-  if (process.env.CLAUDE_CODE_OVERRIDE_DATE) {
-    return process.env.CLAUDE_CODE_OVERRIDE_DATE
+  if (process.env.COPILOT_CLI_OVERRIDE_DATE) {
+    return process.env.COPILOT_CLI_OVERRIDE_DATE
   }
 
   const now = new Date()
@@ -25,8 +25,8 @@ export const getSessionStartDate = memoize(getLocalIsoDate)
  * Changes monthly, not daily — used in tool prompts to minimize cache busting.
  */
 export function getLocalMonthYear(): string {
-  const date = process.env.CLAUDE_CODE_OVERRIDE_DATE
-    ? new Date(process.env.CLAUDE_CODE_OVERRIDE_DATE)
+  const date = process.env.COPILOT_CLI_OVERRIDE_DATE
+    ? new Date(process.env.COPILOT_CLI_OVERRIDE_DATE)
     : new Date()
   return date.toLocaleString('en-US', { month: 'long', year: 'numeric' })
 }

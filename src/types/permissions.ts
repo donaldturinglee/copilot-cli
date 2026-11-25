@@ -322,3 +322,35 @@ export type ToolPermissionContext = {
   readonly awaitAutomatedChecksBeforeDialog?: boolean
   readonly prePlanMode?: PermissionMode
 }
+
+export function getEmptyToolPermissionContext(): ToolPermissionContext {
+  return {
+    mode: 'default',
+    additionalWorkingDirectories: new Map(),
+    alwaysAllowRules: {},
+    alwaysDenyRules: {},
+    alwaysAskRules: {},
+    isBypassPermissionsModeAvailable: false,
+  }
+}
+
+export function toExternalPermissionMode(
+  mode: PermissionMode,
+): ExternalPermissionMode {
+  if (
+    (EXTERNAL_PERMISSION_MODES as readonly string[]).includes(mode)
+  ) {
+    return mode as ExternalPermissionMode
+  }
+  return 'default'
+}
+
+export function permissionModeFromString(value: string): PermissionMode {
+  if ((PERMISSION_MODES as readonly string[]).includes(value)) {
+    return value as PermissionMode
+  }
+  if (value === 'auto' || value === 'bubble') {
+    return value
+  }
+  return 'default'
+}

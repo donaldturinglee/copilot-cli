@@ -373,3 +373,306 @@ export type CanUseToolFn = (
   assistantMessage: unknown,
   toolUseId: string,
 ) => Promise<PermissionResult>
+
+// From Phase 1/2: Model usage & model selection contracts
+export type ModelUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+  webSearchRequests: number
+  costUsd: number
+  contextWindow: number
+  maxOutputTokens: number
+}
+
+export type ModelSetting = string | null
+
+export type ModelStrings = {
+  haiku35?: string
+  haiku45?: string
+  sonnet35?: string
+  sonnet37?: string
+  sonnet40?: string
+  sonnet45?: string
+  sonnet46?: string
+  opus40?: string
+  opus41?: string
+  opus45?: string
+  opus46?: string
+  [key: string]: string | undefined
+}
+
+export type AgentColorName =
+  | 'red'
+  | 'blue'
+  | 'green'
+  | 'yellow'
+  | 'purple'
+  | 'orange'
+  | 'pink'
+  | 'cyan'
+
+export type HookEvent =
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'PostToolUseFailure'
+  | 'Notification'
+  | 'UserPromptSubmit'
+  | 'SessionStart'
+  | 'SessionEnd'
+  | 'Stop'
+  | 'StopFailure'
+  | 'SubagentStart'
+  | 'SubagentStop'
+  | 'PreCompact'
+  | 'PostCompact'
+  | 'PermissionRequest'
+  | 'PermissionDenied'
+  | 'Setup'
+  | 'TeammateIdle'
+  | 'TaskCreated'
+  | 'TaskCompleted'
+  | 'Elicitation'
+  | 'ElicitationResult'
+  | 'ConfigChange'
+  | 'WorktreeCreate'
+  | 'WorktreeRemove'
+  | 'InstructionsLoaded'
+  | 'CwdChanged'
+  | 'FileChanged'
+
+export type HookCallbackMatcher = {
+  matcher?: string
+  hooks: Array<(...args: unknown[]) => Promise<unknown>>
+  timeout?: number
+}
+
+export type PluginHookMatcher = {
+  matcher?: string
+  hooks: unknown[]
+  pluginRoot: string
+  pluginName?: string
+  pluginId?: string
+}
+
+// Lightweight structural OpenTelemetry contracts (avoids pulling @opentelemetry/* in Phase 1)
+export type OtelAttributeValue =
+  | string
+  | number
+  | boolean
+  | Array<null | undefined | string>
+  | Array<null | undefined | number>
+  | Array<null | undefined | boolean>
+
+export type OtelAttributes = Record<string, OtelAttributeValue | undefined>
+
+export type OtelMetricOptions = {
+  description?: string
+  unit?: string
+}
+
+export type OtelCounter = {
+  add(value: number, attributes?: OtelAttributes): void
+}
+
+export type OtelMeter = {
+  createCounter(name: string, options?: OtelMetricOptions): OtelCounter
+}
+
+export type OtelLogRecord = {
+  body?: string
+  attributes?: OtelAttributes
+  severityText?: string
+  severityNumber?: number
+}
+
+export type OtelEventLogger = {
+  emit(logRecord: OtelLogRecord): void
+}
+
+export type OtelLoggerProvider = {
+  forceFlush?: () => Promise<void>
+  shutdown?: () => Promise<void>
+}
+
+export type OtelMeterProvider = {
+  forceFlush?: () => Promise<void>
+  shutdown?: () => Promise<void>
+}
+
+export type OtelTracerProvider = {
+  forceFlush?: () => Promise<void>
+  shutdown?: () => Promise<void>
+}
+
+export type GitHubActionsMetadata = {
+  actorId?: string
+  repositoryId?: string
+  repositoryOwnerId?: string
+}
+
+export type CoreUserData = {
+  deviceId: string
+  sessionId: string
+  platform: 'win32' | 'darwin' | 'linux'
+  organizationUuid?: string
+  accountUuid?: string
+  userType?: string
+  subscriptionType?: string
+  rateLimitTier?: string
+  firstTokenTime?: number
+  email?: string
+  appVersion?: string
+  githubActionsMetadata?: GitHubActionsMetadata
+}
+
+// From Phase 1.2 / Phase 9: Task & UI forward-compatible structural types
+export type TaskStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'killed'
+
+export function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'killed'
+}
+
+export type BaseTaskState = {
+  id: string
+  type: TaskType
+  status: TaskStatus
+  description?: string
+  abortController?: AbortController
+  [key: string]: unknown
+}
+
+export type InProcessTeammateTaskState = BaseTaskState & {
+  type: 'in_process_teammate'
+  identity?: {
+    agentId: string
+    agentName: string
+    teamName: string
+    color?: string
+  }
+}
+
+export type LocalAgentTaskState = BaseTaskState & {
+  type: 'local_agent'
+  retain?: boolean
+  messages?: Message[]
+  diskLoaded?: boolean
+  evictAfter?: number
+}
+
+export type OtherTaskState = Omit<BaseTaskState, 'type'> & {
+  type: Exclude<TaskType, 'in_process_teammate' | 'local_agent'>
+}
+
+export type TaskState =
+  | InProcessTeammateTaskState
+  | LocalAgentTaskState
+  | OtherTaskState
+
+export type TodoItem = {
+  id?: string
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm?: string
+}
+
+export type TodoList = TodoItem[]
+
+export type Notification = {
+  key: string
+  text: string
+  priority?: 'low' | 'medium' | 'high' | 'immediate'
+  color?: string
+  timeoutMs?: number
+  invalidates?: string[]
+  [key: string]: unknown
+}
+
+export type ElicitationRequestEvent = {
+  serverName: string
+  requestId?: string
+  message?: string
+  requestedSchema?: Record<string, unknown>
+  resolve?: (response: unknown) => void
+  [key: string]: unknown
+}
+
+export type McpServerConnection = {
+  name: string
+  type: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+  config?: McpServerConfig
+  [key: string]: unknown
+}
+
+export type ServerResource = {
+  uri: string
+  name: string
+  description?: string
+  mimeType?: string
+  [key: string]: unknown
+}
+
+export type Tool = {
+  name: string
+  [key: string]: unknown
+}
+
+export type AttributionState = {
+  fileStates: Map<string, unknown>
+  promptCount: number
+  promptCountAtLastCommit: number
+  permissionPromptCount: number
+  permissionPromptCountAtLastCommit: number
+  escapeCount: number
+  escapeCountAtLastCommit: number
+  [key: string]: unknown
+}
+
+export type DenialTrackingState = {
+  consecutiveDenials: number
+  totalDenials: number
+  lastDenialTime?: number
+}
+
+export type AllowedPrompt = {
+  tool: string
+  prompt: string
+}
+
+export type ReplHookContext = Record<string, unknown>
+
+export type ThemeSetting = ThemeName | 'auto'
+
+export type BillingType = string
+
+export type ReferralEligibilityResponse = {
+  eligible: boolean
+  remainingPasses?: number
+  [key: string]: unknown
+}
+
+export type StoredCompanion = {
+  name?: string
+  species?: string
+  [key: string]: unknown
+}
+
+export type ModelOption = {
+  value: string
+  label: string
+  description?: string
+}
+
+export type MemoryType =
+  | 'User'
+  | 'Local'
+  | 'Project'
+  | 'Managed'
+  | 'AutoMem'
+  | 'TeamMem'
