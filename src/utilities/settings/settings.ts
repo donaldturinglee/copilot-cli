@@ -279,9 +279,9 @@ export function getSettingsFilePathForSource(
       return join(resolve(getClaudeConfigHomeDir()), filename)
     }
     case 'projectSettings':
-      return join(resolve(getOriginalCwd()), '.claude', 'settings.json')
+      return join(resolve(getOriginalCwd()), '.copilot', 'settings.json')
     case 'localSettings':
-      return join(resolve(getOriginalCwd()), '.claude', 'settings.local.json')
+      return join(resolve(getOriginalCwd()), '.copilot', 'settings.local.json')
     case 'flagSettings': {
       const flagPath = getFlagSettingsPath()
       return flagPath ? resolve(flagPath) : undefined
@@ -295,8 +295,8 @@ export function getRelativeSettingsFilePathForSource(
   source: 'projectSettings' | 'localSettings',
 ): string {
   return source === 'projectSettings'
-    ? join('.claude', 'settings.json')
-    : join('.claude', 'settings.local.json')
+    ? join('.copilot', 'settings.json')
+    : join('.copilot', 'settings.local.json')
 }
 
 function hasKeys(value: Record<string, unknown> | null | undefined): boolean {
@@ -523,7 +523,7 @@ export function updateSettingsForSource(
 
     if (source === 'localSettings' && gitignoreRuleUpdater) {
       void gitignoreRuleUpdater(
-        join('.claude', 'settings.local.json'),
+        join('.copilot', 'settings.local.json'),
         getOriginalCwd(),
       ).catch(error => {
         logForDebugging(`Failed to update .gitignore: ${error}`)

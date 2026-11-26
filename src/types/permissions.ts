@@ -3,7 +3,7 @@
  */
 
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
-import { isFeatureEnabled } from '../utils/feature_flags.js'
+import { isFeatureEnabled } from '../utilities/feature_flags.js'
 
 // ============================================================================
 // Permission Modes

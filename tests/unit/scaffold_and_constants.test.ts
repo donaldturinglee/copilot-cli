@@ -53,7 +53,7 @@ import {
   FEATURE_FLAGS,
   isFeatureEnabled,
   setFeatureOverrideForTesting,
-} from '../../src/utils/feature_flags.js'
+} from '../../src/utilities/feature_flags.js'
 
 describe('Step 0.1 — MACRO globals & feature flags', () => {
   afterEach(() => {

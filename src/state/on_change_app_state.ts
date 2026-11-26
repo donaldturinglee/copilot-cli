@@ -3,16 +3,16 @@ import {
   permissionModeFromString,
   toExternalPermissionMode,
 } from '../types/permissions.js'
-import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
-import { toError } from '../utils/errors.js'
-import { logError } from '../utils/log.js'
-import { applyConfigEnvironmentVariables } from '../utils/managed_env.js'
+import { getGlobalConfig, saveGlobalConfig } from '../utilities/config.js'
+import { toError } from '../utilities/errors.js'
+import { logError } from '../utilities/log.js'
+import { applyConfigEnvironmentVariables } from '../utilities/managed_env.js'
 import {
   notifyPermissionModeChanged,
   notifySessionMetadataChanged,
   type SessionExternalMetadata,
-} from '../utils/session_state.js'
-import { updateSettingsForSource } from '../utils/settings/settings.js'
+} from '../utilities/session_state.js'
+import { updateSettingsForSource } from '../utilities/settings/settings.js'
 import type { AppState } from './app_state_store.js'
 
 const authCacheInvalidators = new Set<() => void>()

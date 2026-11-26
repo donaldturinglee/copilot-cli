@@ -1,11 +1,11 @@
 import { logEvent } from '../services/analytics/index.js'
-import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
-import { isFeatureEnabled } from '../utils/feature_flags.js'
-import { logError } from '../utils/log.js'
+import { getGlobalConfig, saveGlobalConfig } from '../utilities/config.js'
+import { isFeatureEnabled } from '../utilities/feature_flags.js'
+import { logError } from '../utilities/log.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 import { getMigrationHooks } from './migration_hooks.js'
 
 /**

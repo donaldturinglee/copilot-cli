@@ -2,11 +2,11 @@ import {
   logEvent,
   type VerifiedNonSensitiveAnalyticsMetadata,
 } from '../services/analytics/index.js'
-import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
+import { getGlobalConfig, saveGlobalConfig } from '../utilities/config.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 import { getMigrationHooks } from './migration_hooks.js'
 
 const SONNET_45_MODELS = new Set([

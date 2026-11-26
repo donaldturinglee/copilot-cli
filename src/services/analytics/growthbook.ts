@@ -7,8 +7,8 @@
  */
 
 import type { GitHubActionsMetadata } from '../../types/forward.js'
-import { logError } from '../../utils/log.js'
-import { createSignal } from '../../utils/signal.js'
+import { logError } from '../../utilities/log.js'
+import { createSignal } from '../../utilities/signal.js'
 
 export type GrowthBookUserAttributes = {
   id: string

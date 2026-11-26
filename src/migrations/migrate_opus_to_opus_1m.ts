@@ -2,7 +2,7 @@ import { logEvent } from '../services/analytics/index.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 import { getMigrationHooks } from './migration_hooks.js'
 
 /**

@@ -22,7 +22,7 @@ export const getGlobalClaudeFile = memoize(
     if (getFsImplementation().existsSync(legacyConfig)) {
       return legacyConfig
     }
-    const filename = `.claude${fileSuffixForOauthConfig()}.json`
+    const filename = `.copilot${fileSuffixForOauthConfig()}.json`
     return join(process.env.CLAUDE_CONFIG_DIR || homedir(), filename)
   },
   () =>

@@ -36,33 +36,33 @@ import {
   setGrowthBookConfigOverride,
 } from '../../src/services/analytics/growthbook.js'
 import { asSessionId } from '../../src/types/ids.js'
-import { ActivityManager } from '../../src/utils/activity_manager.js'
-import { getCwd, runWithCwdOverride } from '../../src/utils/cwd.js'
+import { ActivityManager } from '../../src/utilities/activity_manager.js'
+import { getCwd, runWithCwdOverride } from '../../src/utilities/cwd.js'
 import {
   parseFrontmatter,
   splitPathInFrontmatter,
-} from '../../src/utils/frontmatter_parser.js'
-import { parseJsonl, safeParseJson } from '../../src/utils/json.js'
+} from '../../src/utilities/frontmatter_parser.js'
+import { parseJsonl, safeParseJson } from '../../src/utilities/json.js'
 import {
   getInMemoryErrors,
   logError,
   resetErrorLogForTesting,
-} from '../../src/utils/log.js'
-import { memoizeWithLru, memoizeWithTtl } from '../../src/utils/memoize.js'
+} from '../../src/utilities/log.js'
+import { memoizeWithLru, memoizeWithTtl } from '../../src/utilities/memoize.js'
 import {
   containsPathTraversal,
   normalizePathForConfigKey,
   sanitizePath,
-} from '../../src/utils/path.js'
+} from '../../src/utilities/path.js'
 import {
   drainSdkEvents,
   emitTaskTerminatedSdk,
   enqueueSdkEvent,
-} from '../../src/utils/sdk_event_queue.js'
+} from '../../src/utilities/sdk_event_queue.js'
 import {
   posixPathToWindowsPath,
   windowsPathToPosixPath,
-} from '../../src/utils/windows_paths.js'
+} from '../../src/utilities/windows_paths.js'
 
 afterEach(() => {
   resetStateForTests()

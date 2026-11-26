@@ -1,6 +1,6 @@
 import { logEvent } from '../services/analytics/index.js'
-import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
-import { getInitialSettings } from '../utils/settings/settings.js'
+import { getGlobalConfig, saveGlobalConfig } from '../utilities/config.js'
+import { getInitialSettings } from '../utilities/settings/settings.js'
 import { getMigrationHooks } from './migration_hooks.js'
 
 /**

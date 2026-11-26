@@ -1320,13 +1320,13 @@ export function getMemoryPath(memoryType: MemoryType): string {
   const cwd = getOriginalCwd()
   switch (memoryType) {
     case 'User':
-      return join(getClaudeConfigHomeDir(), 'CLAUDE.md')
+      return join(getClaudeConfigHomeDir(), 'INSTRUCTIONS.md')
     case 'Local':
-      return join(cwd, 'CLAUDE.local.md')
+      return join(cwd, 'INSTRUCTIONS.local.md')
     case 'Project':
-      return join(cwd, 'CLAUDE.md')
+      return join(cwd, 'INSTRUCTIONS.md')
     case 'Managed':
-      return join(getManagedFilePath(), 'CLAUDE.md')
+      return join(getManagedFilePath(), 'INSTRUCTIONS.md')
     case 'AutoMem':
       return (
         autoMemEntrypointProvider?.() ??
@@ -1340,7 +1340,7 @@ export function getMemoryPath(memoryType: MemoryType): string {
 }
 
 export function getManagedClaudeRulesDir(): string {
-  return join(getManagedFilePath(), '.claude', 'rules')
+  return join(getManagedFilePath(), '.copilot', 'rules')
 }
 
 export function getUserClaudeRulesDir(): string {

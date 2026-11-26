@@ -24,8 +24,8 @@ import {
 } from '../types/permissions.js'
 import type { LoadedPlugin, PluginError } from '../types/plugin.js'
 import type { DeepImmutable } from '../types/utils.js'
-import { getInitialSettings } from '../utils/settings/settings.js'
-import type { SettingsJson } from '../utils/settings/types.js'
+import { getInitialSettings } from '../utilities/settings/settings.js'
+import type { SettingsJson } from '../utilities/settings/types.js'
 import type { Store } from './store.js'
 
 export type CompletionBoundary =

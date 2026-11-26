@@ -31,29 +31,26 @@ import { resetAutoModeOptInForDefaultOffer } from './migrations/reset_auto_mode_
 import { resetProToOpusDefault } from './migrations/reset_pro_to_opus_default.js'
 import { setup } from './setup.js'
 import { PERMISSION_MODES, type PermissionMode } from './types/permissions.js'
-import { eagerParseCliFlag } from './utils/cli_args.js'
-import { getCwd } from './utils/cwd.js'
-import { setHasFormattedOutput } from './utils/debug.js'
-import { seedEarlyInput, stopCapturingEarlyInput } from './utils/early_input.js'
-import { isBareMode, isEnvTruthy } from './utils/env_utils.js'
-import { ensureMacroGlobals, isFeatureEnabled } from './utils/feature_flags.js'
-import { getFsImplementation } from './utils/fs_operations.js'
-import {
-  gracefulShutdown,
-  gracefulShutdownSync,
-} from './utils/graceful_shutdown.js'
-import { applyConfigEnvironmentVariables } from './utils/managed_env.js'
-import { peekForStdinData } from './utils/process.js'
-import { parseSettingSourcesFlag } from './utils/settings/constants.js'
-import { startMdmRawRead } from './utils/settings/mdm/raw_read.js'
-import { ensureMdmSettingsLoaded } from './utils/settings/mdm/settings.js'
-import { resetSettingsCache } from './utils/settings/settings_cache.js'
-import { writeFileSyncDeprecated } from './utils/slow_operations.js'
-import { profileCheckpoint, profileReport } from './utils/startup_profiler.js'
-import { generateTempFilePath } from './utils/tempfile.js'
-import { validateUuid } from './utils/uuid.js'
-import { initializeWarningHandler } from './utils/warning_handler.js'
-import { runWithWorkload } from './utils/workload_context.js'
+import { eagerParseCliFlag } from './utilities/cli_args.js'
+import { getCwd } from './utilities/cwd.js'
+import { setHasFormattedOutput } from './utilities/debug.js'
+import { seedEarlyInput, stopCapturingEarlyInput } from './utilities/early_input.js'
+import { isBareMode, isEnvTruthy } from './utilities/env_utils.js'
+import { ensureMacroGlobals, isFeatureEnabled } from './utilities/feature_flags.js'
+import { getFsImplementation } from './utilities/fs_operations.js'
+import { gracefulShutdown } from './utilities/graceful_shutdown.js'
+import { applyConfigEnvironmentVariables } from './utilities/managed_env.js'
+import { peekForStdinData } from './utilities/process.js'
+import { parseSettingSourcesFlag } from './utilities/settings/constants.js'
+import { startMdmRawRead } from './utilities/settings/mdm/raw_read.js'
+import { ensureMdmSettingsLoaded } from './utilities/settings/mdm/settings.js'
+import { resetSettingsCache } from './utilities/settings/settings_cache.js'
+import { writeFileSyncDeprecated } from './utilities/slow_operations.js'
+import { profileCheckpoint, profileReport } from './utilities/startup_profiler.js'
+import { generateTempFilePath } from './utilities/tempfile.js'
+import { validateUuid } from './utilities/uuid.js'
+import { initializeWarningHandler } from './utilities/warning_handler.js'
+import { runWithWorkload } from './utilities/workload_context.js'
 
 ensureMacroGlobals()
 profileCheckpoint('main_tsx_entry')
@@ -277,6 +274,41 @@ function registerSubcommands<
     const handler = runtimeHooks.subcommandHandlers?.[name]
     if (handler) {
       await handler(...args)
+      return
+    }
+    if (name === 'auth:status') {
+      const cmdOptions = (args[0] as { json?: boolean; text?: boolean } | undefined) ?? {}
+      const { getAccountInformation, getAuthTokenSource, isClaudeAiSubscriber } =
+        await import('./utilities/auth.js')
+      const { getApiProvider } = await import('./utilities/model/providers.js')
+      const info = getAccountInformation()
+      const tokenSource = getAuthTokenSource()
+      const status = {
+        loggedIn: tokenSource.hasToken || Boolean(info.apiKeySource),
+        authMethod: isClaudeAiSubscriber()
+          ? 'claude.ai'
+          : info.apiKeySource ?? tokenSource.source,
+        apiProvider: getApiProvider(),
+        ...info,
+      }
+      if (cmdOptions.text) {
+        process.stdout.write(
+          `Logged in: ${status.loggedIn ? 'yes' : 'no'}\n` +
+            `Auth method: ${status.authMethod}\n` +
+            `API provider: ${status.apiProvider}\n` +
+            (status.email ? `Email: ${status.email}\n` : '') +
+            (status.organization ? `Organization: ${status.organization}\n` : '') +
+            (status.subscription ? `Subscription: ${status.subscription}\n` : ''),
+        )
+      } else {
+        process.stdout.write(JSON.stringify(status, null, 2) + '\n')
+      }
+      return
+    }
+    if (name === 'auth:logout') {
+      const { logout } = await import('./utilities/auth.js')
+      await logout()
+      process.stdout.write('Successfully logged out.\n')
       return
     }
     cliError(`Subcommand "${name}" is not implemented in this phase.`)
@@ -826,7 +858,55 @@ export function createCliProgram(argv: string[] = process.argv) {
         await runtimeHooks.onHeadlessRun(prompt, options)
         return
       }
-      gracefulShutdownSync(0)
+      const { runHeadless } = await import('./cli/print.js')
+      await runHeadless(prompt, {
+        outputFormat: outputFormat as 'text' | 'json' | 'stream-json' | undefined,
+        inputFormat: inputFormat as 'text' | 'stream-json' | undefined,
+        verbose: Boolean(options.verbose),
+        model: typeof options.model === 'string' ? options.model : undefined,
+        fallbackModel:
+          typeof options.fallbackModel === 'string'
+            ? options.fallbackModel
+            : undefined,
+        effort: typeof options.effort === 'string' ? options.effort : undefined,
+        thinking: options.thinking as
+          | 'enabled'
+          | 'adaptive'
+          | 'disabled'
+          | undefined,
+        maxThinkingTokens:
+          typeof options.maxThinkingTokens === 'number'
+            ? options.maxThinkingTokens
+            : undefined,
+        maxTurns:
+          typeof options.maxTurns === 'number' ? options.maxTurns : undefined,
+        maxBudgetUsd:
+          typeof options.maxBudgetUsd === 'number'
+            ? options.maxBudgetUsd
+            : undefined,
+        taskBudget:
+          typeof options.taskBudget === 'number'
+            ? options.taskBudget
+            : undefined,
+        systemPrompt:
+          typeof options.systemPrompt === 'string'
+            ? options.systemPrompt
+            : undefined,
+        appendSystemPrompt:
+          typeof options.appendSystemPrompt === 'string'
+            ? options.appendSystemPrompt
+            : undefined,
+        betas: Array.isArray(options.betas)
+          ? (options.betas as string[])
+          : undefined,
+        addDir: Array.isArray(options.addDir)
+          ? (options.addDir as string[])
+          : undefined,
+        permissionMode,
+        dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
+        includePartialMessages: Boolean(options.includePartialMessages),
+        replayUserMessages: Boolean(options.replayUserMessages),
+      })
       return
     }
 

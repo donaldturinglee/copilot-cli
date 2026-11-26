@@ -2,11 +2,11 @@ import {
   logEvent,
   type VerifiedNonSensitiveAnalyticsMetadata,
 } from '../services/analytics/index.js'
-import { saveGlobalConfig } from '../utils/config.js'
+import { saveGlobalConfig } from '../utilities/config.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 import { getMigrationHooks } from './migration_hooks.js'
 
 const LEGACY_OPUS_MODELS = new Set([

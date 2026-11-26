@@ -3,22 +3,23 @@ import {
   getIsNonInteractiveSession,
   getSessionCounter,
 } from '../bootstrap/state.js'
-import { preconnectAnthropicApi } from '../utils/api_preconnect.js'
-import { applyExtraCaCertsFromConfig } from '../utils/ca_certs_config.js'
-import { enableConfigs, recordFirstStartTime } from '../utils/config.js'
-import { detectCurrentRepository } from '../utils/detect_repository.js'
-import { logForDiagnosticsNoPii } from '../utils/diag_logs.js'
-import { initJetBrainsDetection } from '../utils/env_dynamic.js'
-import { ConfigParseError } from '../utils/errors.js'
+import { preconnectAnthropicApi } from '../utilities/api_preconnect.js'
+import { applyExtraCaCertsFromConfig } from '../utilities/ca_certs_config.js'
+import { enableConfigs, recordFirstStartTime } from '../utilities/config.js'
+import { detectCurrentRepository } from '../utilities/detect_repository.js'
+import { logForDiagnosticsNoPii } from '../utilities/diag_logs.js'
+import { initJetBrainsDetection } from '../utilities/env_dynamic.js'
+import { ConfigParseError } from '../utilities/errors.js'
 import {
   gracefulShutdownSync,
   setupGracefulShutdown,
-} from '../utils/graceful_shutdown.js'
-import { applySafeConfigEnvironmentVariables } from '../utils/managed_env.js'
-import { configureGlobalMtls } from '../utils/mtls.js'
-import { configureGlobalAgents } from '../utils/proxy.js'
-import { profileCheckpoint } from '../utils/startup_profiler.js'
-import { setShellIfWindows } from '../utils/windows_paths.js'
+} from '../utilities/graceful_shutdown.js'
+import { applySafeConfigEnvironmentVariables } from '../utilities/managed_env.js'
+import { configureGlobalMtls } from '../utilities/mtls.js'
+import { configureGlobalAgents } from '../utilities/proxy.js'
+import { startKeychainPrefetch } from '../utilities/secure_storage/keychain_prefetch.js'
+import { profileCheckpoint } from '../utilities/startup_profiler.js'
+import { setShellIfWindows } from '../utilities/windows_paths.js'
 
 export type InitHooks = {
   onPostInitAsync?: () => void
@@ -60,6 +61,7 @@ export const init = memoize(async (): Promise<void> => {
 
     void initJetBrainsDetection()
     void detectCurrentRepository()
+    startKeychainPrefetch()
     initHooks.onPostInitAsync?.()
 
     recordFirstStartTime()

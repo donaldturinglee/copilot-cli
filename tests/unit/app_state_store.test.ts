@@ -28,13 +28,13 @@ import {
 import {
   getGlobalConfig,
   resetTestConfigForTesting,
-} from '../../src/utils/config.js'
-import { getClaudeConfigHomeDir } from '../../src/utils/env_utils.js'
+} from '../../src/utilities/config.js'
+import { getClaudeConfigHomeDir } from '../../src/utilities/env_utils.js'
 import {
   setPermissionModeChangedListener,
   setSessionMetadataChangedListener,
-} from '../../src/utils/session_state.js'
-import { resetSettingsCache } from '../../src/utils/settings/settings_cache.js'
+} from '../../src/utilities/session_state.js'
+import { resetSettingsCache } from '../../src/utilities/settings/settings_cache.js'
 
 let tempRoot = ''
 let savedConfigDir: string | undefined
@@ -42,7 +42,7 @@ let savedConfigDir: string | undefined
 beforeEach(() => {
   savedConfigDir = process.env.CLAUDE_CONFIG_DIR
   tempRoot = mkdtempSync(join(tmpdir(), 'copilot-app-state-test-'))
-  process.env.CLAUDE_CONFIG_DIR = join(tempRoot, '.claude')
+  process.env.CLAUDE_CONFIG_DIR = join(tempRoot, '.copilot')
   getClaudeConfigHomeDir.cache.clear?.()
   resetStateForTests()
   setOriginalCwd(join(tempRoot, 'project'))

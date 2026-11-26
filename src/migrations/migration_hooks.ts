@@ -1,4 +1,4 @@
-import { isEnvTruthy } from '../utils/env_utils.js'
+import { isEnvTruthy } from '../utilities/env_utils.js'
 
 export type ApiProvider = 'firstParty' | 'bedrock' | 'vertex' | 'foundry'
 

@@ -1,7 +1,7 @@
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 
 /**
  * Migrates removed fennec / opus-4-5-fast aliases in `userSettings` to current Opus aliases.

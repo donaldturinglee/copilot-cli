@@ -16,14 +16,14 @@ import {
   getSessionId,
 } from '../../bootstrap/state.js'
 import type { CoreUserData } from '../../types/forward.js'
-import { isEnvTruthy } from '../../utils/env_utils.js'
-import { isFeatureEnabled } from '../../utils/feature_flags.js'
+import { isEnvTruthy } from '../../utilities/env_utils.js'
+import { isFeatureEnabled } from '../../utilities/feature_flags.js'
 import {
   detectVcs,
   getLinuxDistroInfo,
   getWslVersion,
-} from '../../utils/platform.js'
-import { jsonStringify } from '../../utils/slow_operations.js'
+} from '../../utilities/platform.js'
+import { jsonStringify } from '../../utilities/slow_operations.js'
 import type { VerifiedNonSensitiveAnalyticsMetadata } from './index.js'
 
 export type AnalyticsMetadataProviders = {

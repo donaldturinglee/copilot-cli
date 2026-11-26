@@ -2,11 +2,11 @@ import {
   getMainLoopModelOverride,
   setMainLoopModelOverride,
 } from '../bootstrap/state.js'
-import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
+import { getGlobalConfig, saveGlobalConfig } from '../utilities/config.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
-} from '../utils/settings/settings.js'
+} from '../utilities/settings/settings.js'
 
 /**
  * One-shot migration pinning legacy `sonnet[1m]` users to `sonnet-4-5-20250929[1m]`.

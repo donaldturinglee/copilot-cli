@@ -6,8 +6,8 @@ import { validateSettingsFileContent } from './validation.js'
 export function isClaudeSettingsPath(filePath: string): boolean {
   const normalized = normalize(filePath).replace(/\\/g, '/').toLowerCase()
   if (
-    normalized.endsWith('/.claude/settings.json') ||
-    normalized.endsWith('/.claude/settings.local.json')
+    normalized.endsWith('/.copilot/settings.json') ||
+    normalized.endsWith('/.copilot/settings.local.json')
   ) {
     return true
   }

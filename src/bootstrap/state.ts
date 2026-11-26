@@ -21,8 +21,8 @@ import type {
   SettingSource,
 } from '../types/forward.js'
 import type { SessionId } from '../types/ids.js'
-import { isFeatureEnabled } from '../utils/feature_flags.js'
-import { createSignal } from '../utils/signal.js'
+import { isFeatureEnabled } from '../utilities/feature_flags.js'
+import { createSignal } from '../utilities/signal.js'
 
 type RegisteredHookMatcher = HookCallbackMatcher | PluginHookMatcher
 

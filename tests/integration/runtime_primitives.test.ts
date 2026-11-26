@@ -14,13 +14,13 @@ import {
   logEventAsync,
   resetForTesting,
 } from '../../src/services/analytics/index.js'
-import { createBufferedWriter } from '../../src/utils/buffered_writer.js'
+import { createBufferedWriter } from '../../src/utilities/buffered_writer.js'
 import {
   registerCleanup,
   runCleanupFunctions,
-} from '../../src/utils/cleanup_registry.js'
-import * as lockfile from '../../src/utils/lockfile.js'
-import { generateTempFilePath } from '../../src/utils/tempfile.js'
+} from '../../src/utilities/cleanup_registry.js'
+import * as lockfile from '../../src/utilities/lockfile.js'
+import { generateTempFilePath } from '../../src/utilities/tempfile.js'
 
 describe('Phase 0 integration — filesystem, lifecycle & analytics sink plumbing', () => {
   afterEach(() => {

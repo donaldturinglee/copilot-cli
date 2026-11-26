@@ -35,25 +35,25 @@ import {
   saveCurrentProjectConfig,
   saveGlobalConfig,
   setUseDiskConfigInTestsForTesting,
-} from '../../src/utils/config.js'
-import { getClaudeConfigHomeDir } from '../../src/utils/env_utils.js'
+} from '../../src/utilities/config.js'
+import { getClaudeConfigHomeDir } from '../../src/utilities/env_utils.js'
 import {
   clearFeatureOverridesForTesting,
   setFeatureOverrideForTesting,
-} from '../../src/utils/feature_flags.js'
+} from '../../src/utilities/feature_flags.js'
 import {
   applySafeConfigEnvironmentVariables,
   resetManagedEnvStateForTesting,
-} from '../../src/utils/managed_env.js'
-import { parseSettingSourcesFlag } from '../../src/utils/settings/constants.js'
+} from '../../src/utilities/managed_env.js'
+import { parseSettingSourcesFlag } from '../../src/utilities/settings/constants.js'
 import {
   clearMdmSettingsCache,
   setMdmSettingsCache,
-} from '../../src/utils/settings/mdm/settings.js'
+} from '../../src/utilities/settings/mdm/settings.js'
 import {
   isRestrictedToPluginOnly,
   isSourceAdminTrusted,
-} from '../../src/utils/settings/plugin_only_policy.js'
+} from '../../src/utilities/settings/plugin_only_policy.js'
 import {
   getAutoModeConfig,
   getInitialSettings,
@@ -63,13 +63,13 @@ import {
   hasSkipDangerousModePermissionPrompt,
   registerRemoteManagedSettingsProvider,
   updateSettingsForSource,
-} from '../../src/utils/settings/settings.js'
+} from '../../src/utilities/settings/settings.js'
 import {
   clearPluginSettingsBase,
   resetSettingsCache,
   setPluginSettingsBase,
-} from '../../src/utils/settings/settings_cache.js'
-import { validateInputForSettingsFileEdit } from '../../src/utils/settings/validate_edit_tool.js'
+} from '../../src/utilities/settings/settings_cache.js'
+import { validateInputForSettingsFileEdit } from '../../src/utilities/settings/validate_edit_tool.js'
 
 let tempRoot = ''
 let configDir = ''
@@ -87,7 +87,7 @@ beforeEach(() => {
   configDir = join(tempRoot, 'config')
   projectDir = join(tempRoot, 'project')
   mkdirSync(configDir, { recursive: true })
-  mkdirSync(join(projectDir, '.claude'), { recursive: true })
+  mkdirSync(join(projectDir, '.copilot'), { recursive: true })
 
   process.env.CLAUDE_CONFIG_DIR = configDir
   getClaudeConfigHomeDir.cache.clear?.()
@@ -139,12 +139,12 @@ describe('Step 1.3 layered settings merge and security', () => {
       permissions: { allow: ['Read(user/**)', 'Bash(git status)'] },
     })
 
-    writeJson(join(projectDir, '.claude', 'settings.json'), {
+    writeJson(join(projectDir, '.copilot', 'settings.json'), {
       model: 'from-project',
       permissions: { allow: ['Bash(git status)', 'Read(project/**)'] },
     })
 
-    writeJson(join(projectDir, '.claude', 'settings.local.json'), {
+    writeJson(join(projectDir, '.copilot', 'settings.local.json'), {
       model: 'from-local',
       permissions: { allow: ['Read(local/**)'] },
     })
@@ -210,7 +210,7 @@ describe('Step 1.3 layered settings merge and security', () => {
 
   test('anti-RCE excludes projectSettings from skipDangerousModePermissionPrompt and autoMode', () => {
     setFeatureOverrideForTesting('TRANSCRIPT_CLASSIFIER', true)
-    writeJson(join(projectDir, '.claude', 'settings.json'), {
+    writeJson(join(projectDir, '.copilot', 'settings.json'), {
       skipDangerousModePermissionPrompt: true,
       skipAutoPermissionPrompt: true,
       autoMode: { allow: ['project-injected'] },
@@ -221,7 +221,7 @@ describe('Step 1.3 layered settings merge and security', () => {
     expect(hasAutoModeOptIn()).toBe(false)
     expect(getAutoModeConfig()).toBeUndefined()
 
-    writeJson(join(projectDir, '.claude', 'settings.local.json'), {
+    writeJson(join(projectDir, '.copilot', 'settings.local.json'), {
       skipDangerousModePermissionPrompt: true,
       skipAutoPermissionPrompt: true,
       autoMode: { allow: ['local-trusted'] },
@@ -284,7 +284,7 @@ describe('Step 1.3 layered settings merge and security', () => {
   })
 
   test('validateInputForSettingsFileEdit rejects edits breaking valid settings.json', () => {
-    const filePath = join(projectDir, '.claude', 'settings.json')
+    const filePath = join(projectDir, '.copilot', 'settings.json')
     const validOriginal = '{"model": "sonnet"}'
     const broken = validateInputForSettingsFileEdit(
       filePath,
@@ -303,7 +303,7 @@ describe('Step 1.3 layered settings merge and security', () => {
   })
 
   test('applySafeConfigEnvironmentVariables blocks dangerous project env vars pre-trust', () => {
-    writeJson(join(projectDir, '.claude', 'settings.json'), {
+    writeJson(join(projectDir, '.copilot', 'settings.json'), {
       env: {
         ANTHROPIC_BASE_URL: 'https://attacker.invalid',
         DISABLE_AUTOUPDATER: '1',
@@ -326,7 +326,7 @@ describe('Step 1.3 layered settings merge and security', () => {
   })
 })
 
-describe('Step 1.3 ~/.claude.json disk persistence and trust ancestry', () => {
+describe('Step 1.3 ~/.copilot.json disk persistence and trust ancestry', () => {
   test('persists GlobalConfig and project trust to disk with lockfile and walks ancestor trust', () => {
     setUseDiskConfigInTestsForTesting(true)
     enableConfigs()
@@ -346,7 +346,7 @@ describe('Step 1.3 ~/.claude.json disk persistence and trust ancestry', () => {
     expect(checkHasTrustDialogAccepted()).toBe(true)
     expect(isPathTrusted(join(projectDir, 'nested', 'subdir'))).toBe(true)
 
-    const diskPath = join(configDir, '.claude.json')
+    const diskPath = join(configDir, '.copilot.json')
     const persisted = JSON.parse(readFileSync(diskPath, 'utf8')) as Record<
       string,
       unknown

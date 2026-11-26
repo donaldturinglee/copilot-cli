@@ -13,13 +13,13 @@ import {
   resetStateForTests,
   setOriginalCwd,
 } from '../../src/bootstrap/state.js'
-import { getClaudeConfigHomeDir } from '../../src/utils/env_utils.js'
-import { settingsChangeDetector } from '../../src/utils/settings/change_detector.js'
+import { getClaudeConfigHomeDir } from '../../src/utilities/env_utils.js'
+import { settingsChangeDetector } from '../../src/utilities/settings/change_detector.js'
 import {
   getInitialSettings,
   updateSettingsForSource,
-} from '../../src/utils/settings/settings.js'
-import { resetSettingsCache } from '../../src/utils/settings/settings_cache.js'
+} from '../../src/utilities/settings/settings.js'
+import { resetSettingsCache } from '../../src/utilities/settings/settings_cache.js'
 
 const REPO_ROOT = process.cwd()
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'entrypoints', 'cli.tsx')
@@ -98,7 +98,7 @@ describe('Phase 1 CLI bootstrap integration', () => {
     expect(exitCode).toBe(0)
     expect(stderr).toBe('')
 
-    const globalConfigPath = join(isolatedConfigDir, '.claude.json')
+    const globalConfigPath = join(isolatedConfigDir, '.copilot.json')
     expect(existsSync(globalConfigPath)).toBe(true)
     const saved = JSON.parse(readFileSync(globalConfigPath, 'utf8')) as Record<
       string,
@@ -115,7 +115,7 @@ describe('Phase 1 chokidar settings watcher integration', () => {
     const configDir = join(tempRoot, 'config')
     const projectDir = join(tempRoot, 'project')
     mkdirSync(configDir, { recursive: true })
-    mkdirSync(join(projectDir, '.claude'), { recursive: true })
+    mkdirSync(join(projectDir, '.copilot'), { recursive: true })
 
     const userSettingsPath = join(configDir, 'settings.json')
     writeFileSync(userSettingsPath, JSON.stringify({ model: 'initial' }), 'utf8')

@@ -2,18 +2,18 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import {
   eagerParseCliFlag,
   extractArgsAfterDoubleDash,
-} from '../../src/utils/cli_args.js'
+} from '../../src/utilities/cli_args.js'
 import {
   clearRepositoryCaches,
   parseGitHubRepository,
   parseGitRemote,
-} from '../../src/utils/detect_repository.js'
+} from '../../src/utilities/detect_repository.js'
 import {
   consumeEarlyInput,
   hasEarlyInput,
   seedEarlyInput,
-} from '../../src/utils/early_input.js'
-import { validateBoundedIntEnvVar } from '../../src/utils/env_validation.js'
+} from '../../src/utilities/early_input.js'
+import { validateBoundedIntEnvVar } from '../../src/utilities/env_validation.js'
 import {
   getAuthHeaders,
   getMcpUserAgent,
@@ -21,21 +21,21 @@ import {
   getWebFetchUserAgent,
   registerHttpAuthProvider,
   withOauth401Retry,
-} from '../../src/utils/http.js'
+} from '../../src/utilities/http.js'
 import {
   getAddressFamily,
   getProxyUrl,
   shouldBypassProxy,
-} from '../../src/utils/proxy.js'
+} from '../../src/utilities/proxy.js'
 import {
   parseCommandOutputAsSettings,
   parseRegQueryStdout,
-} from '../../src/utils/settings/mdm/settings.js'
-import { getSystemDirectories } from '../../src/utils/system_directories.js'
+} from '../../src/utilities/settings/mdm/settings.js'
+import { getSystemDirectories } from '../../src/utilities/system_directories.js'
 import {
   initializeWarningHandler,
   resetWarningHandler,
-} from '../../src/utils/warning_handler.js'
+} from '../../src/utilities/warning_handler.js'
 
 afterEach(() => {
   registerHttpAuthProvider(undefined)

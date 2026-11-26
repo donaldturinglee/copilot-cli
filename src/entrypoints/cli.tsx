@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { ensureMacroGlobals, isFeatureEnabled } from '../utils/feature_flags.js'
+import { ensureMacroGlobals, isFeatureEnabled } from '../utilities/feature_flags.js'
 
 process.env.COREPACK_ENABLE_AUTO_PIN = '0'
 
@@ -40,7 +40,7 @@ async function runCli(): Promise<void> {
     return
   }
 
-  const { profileCheckpoint } = await import('../utils/startup_profiler.js')
+  const { profileCheckpoint } = await import('../utilities/startup_profiler.js')
   profileCheckpoint('cli_entry')
 
   // Redirect --update / --upgrade to the `update` subcommand
@@ -56,7 +56,7 @@ async function runCli(): Promise<void> {
     process.env.COPILOT_CLI_SIMPLE = '1'
   }
 
-  const { startCapturingEarlyInput } = await import('../utils/early_input.js')
+  const { startCapturingEarlyInput } = await import('../utilities/early_input.js')
   startCapturingEarlyInput()
 
   profileCheckpoint('cli_before_main_import')

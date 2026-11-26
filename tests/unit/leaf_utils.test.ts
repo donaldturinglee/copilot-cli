@@ -6,20 +6,20 @@ import { stripProtoFields } from '../../src/services/analytics/index.js'
 import {
   createAbortController,
   createChildAbortController,
-} from '../../src/utils/abort_controller.js'
-import { count, intersperse, uniq } from '../../src/utils/array.js'
-import { createBufferedWriter } from '../../src/utils/buffered_writer.js'
+} from '../../src/utilities/abort_controller.js'
+import { count, intersperse, uniq } from '../../src/utilities/array.js'
+import { createBufferedWriter } from '../../src/utilities/buffered_writer.js'
 import {
   isInBundledMode,
   isRunningWithBun,
-} from '../../src/utils/bundled_mode.js'
-import { CircularBuffer } from '../../src/utils/circular_buffer.js'
-import { createCombinedAbortSignal } from '../../src/utils/combined_abort_signal.js'
+} from '../../src/utilities/bundled_mode.js'
+import { CircularBuffer } from '../../src/utilities/circular_buffer.js'
+import { createCombinedAbortSignal } from '../../src/utilities/combined_abort_signal.js'
 import {
   extractDebugCategories,
   parseDebugFilter,
   shouldShowDebugMessage,
-} from '../../src/utils/debug_filter.js'
+} from '../../src/utilities/debug_filter.js'
 import {
   getAwsRegion,
   getClaudeConfigHomeDir,
@@ -28,7 +28,7 @@ import {
   isEnvDefinedFalsy,
   isEnvTruthy,
   parseEnvVars,
-} from '../../src/utils/env_utils.js'
+} from '../../src/utilities/env_utils.js'
 import {
   AbortError,
   classifyAxiosError,
@@ -45,7 +45,7 @@ import {
   shortErrorStack,
   TelemetrySafeError,
   toError,
-} from '../../src/utils/errors.js'
+} from '../../src/utilities/errors.js'
 import {
   formatDuration,
   formatFileSize,
@@ -54,38 +54,38 @@ import {
   formatRelativeTime,
   formatSecondsShort,
   formatTokens,
-} from '../../src/utils/format.js'
+} from '../../src/utilities/format.js'
 import {
   all,
   fromArray,
   lastX,
   returnValue,
   toArray,
-} from '../../src/utils/generators.js'
-import { djb2Hash, hashContent, hashPair } from '../../src/utils/hash.js'
+} from '../../src/utilities/generators.js'
+import { djb2Hash, hashContent, hashPair } from '../../src/utilities/hash.js'
 import {
   firstGrapheme,
   getSystemLocaleLanguage,
   getTimeZone,
   lastGrapheme,
-} from '../../src/utils/intl.js'
-import { stripBom } from '../../src/utils/json_read.js'
-import { lazySchema } from '../../src/utils/lazy_schema.js'
-import { objectGroupBy } from '../../src/utils/object_group_by.js'
-import { peekForStdinData } from '../../src/utils/process.js'
+} from '../../src/utilities/intl.js'
+import { stripBom } from '../../src/utilities/json_read.js'
+import { lazySchema } from '../../src/utilities/lazy_schema.js'
+import { objectGroupBy } from '../../src/utilities/object_group_by.js'
+import { peekForStdinData } from '../../src/utilities/process.js'
 import {
   formatMs,
   formatTimelineLine,
   getPerformance,
-} from '../../src/utils/profiler_base.js'
-import { semanticBoolean } from '../../src/utils/semantic_boolean.js'
-import { semanticNumber } from '../../src/utils/semantic_number.js'
-import * as semver from '../../src/utils/semver.js'
-import { sequential } from '../../src/utils/sequential.js'
-import { difference, every, intersects, union } from '../../src/utils/set.js'
-import { createSignal } from '../../src/utils/signal.js'
-import { sleep, withTimeout } from '../../src/utils/sleep.js'
-import { Stream } from '../../src/utils/stream.js'
+} from '../../src/utilities/profiler_base.js'
+import { semanticBoolean } from '../../src/utilities/semantic_boolean.js'
+import { semanticNumber } from '../../src/utilities/semantic_number.js'
+import * as semver from '../../src/utilities/semver.js'
+import { sequential } from '../../src/utilities/sequential.js'
+import { difference, every, intersects, union } from '../../src/utilities/set.js'
+import { createSignal } from '../../src/utilities/signal.js'
+import { sleep, withTimeout } from '../../src/utilities/sleep.js'
+import { Stream } from '../../src/utilities/stream.js'
 import {
   capitalize,
   countCharInString,
@@ -97,34 +97,34 @@ import {
   plural,
   safeJoinLines,
   truncateToLines,
-} from '../../src/utils/string_utils.js'
+} from '../../src/utilities/string_utils.js'
 import {
   registerUpstreamProxyEnvFn,
   subprocessEnv,
-} from '../../src/utils/subprocess_env.js'
-import { toTaggedId } from '../../src/utils/tagged_id.js'
-import { generateTempFilePath } from '../../src/utils/tempfile.js'
+} from '../../src/utilities/subprocess_env.js'
+import { toTaggedId } from '../../src/utilities/tagged_id.js'
+import { generateTempFilePath } from '../../src/utilities/tempfile.js'
 import {
   getDefaultBashTimeoutMs,
   getMaxBashTimeoutMs,
-} from '../../src/utils/timeouts.js'
-import { createAgentId, validateUuid } from '../../src/utils/uuid.js'
-import { withResolvers } from '../../src/utils/with_resolvers.js'
-import { generateShortWordSlug, generateWordSlug } from '../../src/utils/words.js'
+} from '../../src/utilities/timeouts.js'
+import { createAgentId, validateUuid } from '../../src/utilities/uuid.js'
+import { withResolvers } from '../../src/utilities/with_resolvers.js'
+import { generateShortWordSlug, generateWordSlug } from '../../src/utilities/words.js'
 import {
   getWorkload,
   runWithWorkload,
   WORKLOAD_CRON,
-} from '../../src/utils/workload_context.js'
+} from '../../src/utilities/workload_context.js'
 import {
   getUserBinDir,
   getXdgCacheHome,
   getXdgDataHome,
   getXdgStateHome,
-} from '../../src/utils/xdg.js'
-import { escapeXml, escapeXmlAttr } from '../../src/utils/xml.js'
-import { parseYaml } from '../../src/utils/yaml.js'
-import { zodToJsonSchema } from '../../src/utils/zod_to_json_schema.js'
+} from '../../src/utilities/xdg.js'
+import { escapeXml, escapeXmlAttr } from '../../src/utilities/xml.js'
+import { parseYaml } from '../../src/utilities/yaml.js'
+import { zodToJsonSchema } from '../../src/utilities/zod_to_json_schema.js'
 
 describe('Step 0.3 — Core data structures & async primitives', () => {
   test('stripProtoFields preserves reference when unchanged and strips _PROTO_* keys', () => {

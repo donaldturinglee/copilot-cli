@@ -55,9 +55,9 @@ import type {
   ToolProgressData,
 } from '../../src/types/tools.js'
 import type { DeepImmutable, Permutations } from '../../src/types/utils.js'
-import { lazySchema } from '../../src/utils/lazy_schema.js'
-import { semanticBoolean } from '../../src/utils/semantic_boolean.js'
-import { semanticNumber } from '../../src/utils/semantic_number.js'
+import { lazySchema } from '../../src/utilities/lazy_schema.js'
+import { semanticBoolean } from '../../src/utilities/semantic_boolean.js'
+import { semanticNumber } from '../../src/utilities/semantic_number.js'
 
 const SAMPLE_UUID = '550e8400-e29b-41d4-a716-446655440000' as UUID
 

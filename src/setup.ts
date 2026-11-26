@@ -3,9 +3,9 @@ import { setCwdState, switchSession } from './bootstrap/state.js'
 import { logEvent } from './services/analytics/index.js'
 import { asSessionId } from './types/ids.js'
 import type { PermissionMode } from './types/permissions.js'
-import { getCurrentProjectConfig } from './utils/config.js'
-import { logForDiagnosticsNoPii } from './utils/diag_logs.js'
-import { isBareMode, isEnvTruthy } from './utils/env_utils.js'
+import { getCurrentProjectConfig } from './utilities/config.js'
+import { logForDiagnosticsNoPii } from './utilities/diag_logs.js'
+import { isBareMode, isEnvTruthy } from './utilities/env_utils.js'
 
 export type SetupHooks = {
   initSinks?: () => void
