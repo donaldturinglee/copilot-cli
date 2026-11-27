@@ -26,7 +26,7 @@ import type { LoadedPlugin, PluginError } from '../types/plugin.js'
 import type { DeepImmutable } from '../types/utils.js'
 import { getInitialSettings } from '../utilities/settings/settings.js'
 import type { SettingsJson } from '../utilities/settings/types.js'
-import type { Store } from './store.js'
+import { createStore, type Store } from './store.js'
 
 export type CompletionBoundary =
   | { type: 'complete'; completedAt: number; outputTokens: number }
@@ -410,4 +410,15 @@ export function getDefaultAppState(): AppState {
     fastMode: false,
     effortValue: undefined,
   }
+}
+
+export function createAppStateStore(
+  initialOverrides?: Partial<AppState>,
+  onChange?: (args: { newState: AppState; oldState: AppState }) => void,
+): AppStateStore {
+  const base = getDefaultAppState()
+  const initialState: AppState = initialOverrides
+    ? { ...base, ...initialOverrides }
+    : base
+  return createStore<AppState>(initialState, onChange)
 }
