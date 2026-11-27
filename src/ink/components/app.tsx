@@ -108,7 +108,16 @@ export function App({
   )
 
   useEffect(() => {
-    const handleData = (chunk: Buffer | string): void => {
+    let escFlushTimer: ReturnType<typeof setTimeout> | null = null
+    const clearEscTimer = (): void => {
+      if (escFlushTimer) {
+        clearTimeout(escFlushTimer)
+        escFlushTimer = null
+      }
+    }
+
+    const handleData = (chunk: Buffer | string | null): void => {
+      clearEscTimer()
       const [events, nextState] = parseMultipleKeypresses(
         parseStateRef.current,
         chunk,
@@ -156,10 +165,23 @@ export function App({
           emitterRef.current!.emit('input', new InputEvent(input, key))
         })
       }
+
+      // If a standalone ESC (or incomplete escape prefix) sits buffered with no
+      // trailing bytes within 25ms, flush it as an Escape keypress.
+      if (nextState.mode === 'NORMAL' && nextState.incomplete.length > 0) {
+        escFlushTimer = setTimeout(() => {
+          escFlushTimer = null
+          handleData(null)
+        }, 25)
+        if (typeof escFlushTimer.unref === 'function') {
+          escFlushTimer.unref()
+        }
+      }
     }
 
     stdin.on('data', handleData)
     return () => {
+      clearEscTimer()
       stdin.off('data', handleData)
     }
   }, [stdin, exitOnCtrlC, onExit, onMouse, onTerminalResponse])

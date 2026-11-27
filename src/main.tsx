@@ -928,10 +928,8 @@ export function createCliProgram(argv: string[] = process.argv) {
       return
     }
 
-    process.stdout.write(
-      `Copilot CLI ${getMacroVersion()} bootstrap ready (interactive REPL wired in Phase 5/6).\n`,
-    )
-    await gracefulShutdown(0)
+    const { launchInteractiveRepl } = await import('./repl_launcher.js')
+    await launchInteractiveRepl(prompt, options)
     }
 
     if (workloadTag) {

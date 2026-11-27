@@ -119,6 +119,7 @@ export interface QueryEngineConfig {
   includePartialMessages?: boolean
   abortController?: AbortController
   additionalDirectories?: string[]
+  isNonInteractiveSession?: boolean
   deps?: QueryDeps
 }
 
@@ -393,7 +394,7 @@ export class QueryEngine {
         mainLoopModel,
         tools: effectiveTools,
         thinkingConfig,
-        isNonInteractiveSession: true,
+        isNonInteractiveSession: this.config.isNonInteractiveSession ?? true,
         hasAppendSystemPrompt: Boolean(effectiveAppendSystemPrompt),
       },
     }

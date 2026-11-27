@@ -222,4 +222,20 @@ describe('Phase 5.3 — React 19 Ink Reconciler, Double-Buffered Rendering & Eve
     expect(snap.plain).toBe('Hello Offscreen')
     expect(snap.ansi).toContain('\x1b[')
   })
+
+  test('main-screen TTY LogUpdate resets column to 0 after full-width bordered rows to avoid xenl double-wrap drift', () => {
+    const { stdout, stdin, chunks } = createMockTTYStreams(40, 12)
+    const inst = render(
+      <Box borderStyle="round" width={40} flexDirection="column">
+        <Text>Welcome to Copilot CLI</Text>
+      </Box>,
+      { stdout, stdin, altScreen: false },
+    )
+    const raw = chunks.join('')
+    // Each rendered full-width row must reset to col 0 with `\r` before moving down
+    expect(raw).toContain('╭──────────────────────────────────────╮\r')
+    expect(raw).toContain('│Welcome to Copilot CLI                │\r')
+    expect(raw).toContain('╰──────────────────────────────────────╯\r')
+    inst.unmount()
+  })
 })

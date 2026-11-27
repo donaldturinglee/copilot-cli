@@ -38,14 +38,21 @@ class VirtualScreen {
   }
 
   moveTo(targetX: number, targetY: number): void {
-    const dx = targetX - this.x
     const dy = targetY - this.y
-    if (dx === 0 && dy === 0) return
-    if (targetX === 0 && dy === 0) {
-      this.ops.push({ type: 'carriageReturn' })
-    } else {
-      this.ops.push({ type: 'cursorMove', x: dx, y: dy })
+    if (targetX === 0) {
+      if (this.x !== 0) {
+        this.ops.push({ type: 'carriageReturn' })
+        this.x = 0
+      }
+      if (dy !== 0) {
+        this.ops.push({ type: 'cursorMove', x: 0, y: dy })
+        this.y = targetY
+      }
+      return
     }
+    const dx = targetX - this.x
+    if (dx === 0 && dy === 0) return
+    this.ops.push({ type: 'cursorMove', x: dx, y: dy })
     this.x = targetX
     this.y = targetY
   }
@@ -320,7 +327,8 @@ export class LogUpdate {
       if (prev.screen.height > 0) {
         vs.moveTo(0, prev.screen.height)
       }
-      vs.push({ type: 'stdout', content: '\n'.repeat(extra) }, 0, extra)
+      vs.push({ type: 'stdout', content: '\r\n'.repeat(extra) }, 0, extra)
+      vs.x = 0
     }
 
     for (const y of sortedRows) {
@@ -329,6 +337,11 @@ export class LogUpdate {
       const line = renderRowToString(next.screen, y, stylePool)
       if (line.length > 0) {
         vs.push({ type: 'stdout', content: line })
+        // Always return to column 0 immediately after painting a row so full-width
+        // lines (which enter VT100 xenl delayed-wrap at column width-1) never drift
+        // or double-wrap on the next vertical cursorMove.
+        vs.push({ type: 'carriageReturn' })
+        vs.x = 0
       }
     }
 
