@@ -8,11 +8,8 @@ import {
   setMainLoopModelOverride,
   setSdkBetas,
 } from '../bootstrap/state.js'
-import {
-  SYNTHETIC_OUTPUT_TOOL_NAME,
-  TOOL_SEARCH_TOOL_NAME,
-} from '../constants/tools.js'
 import { formatTotalCost, saveCurrentSessionCosts } from '../cost_tracker.js'
+import { createCanUseTool } from '../hooks/tool_permission/use_can_use_tool.js'
 import { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
 import {
@@ -21,17 +18,20 @@ import {
 } from '../state/app_state_store.js'
 import { onChangeAppState } from '../state/on_change_app_state.js'
 import { createStore } from '../state/store.js'
-import type { AnyTool, ToolUseContext } from '../tool.js'
 import { assembleToolPool } from '../tools.js'
-import type { CanUseToolFn } from '../types/forward.js'
 import type { PermissionMode, ToolPermissionContext } from '../types/permissions.js'
 import { hasConsoleBillingAccess } from '../utilities/billing.js'
 import { getCwd } from '../utilities/cwd.js'
 import { parseEffortValue } from '../utilities/effort.js'
 import { gracefulShutdownSync } from '../utilities/graceful_shutdown.js'
 import { logHeadlessProfilerTurn } from '../utilities/headless_profiler.js'
+import {
+  executeSessionEndHooks,
+  executeSessionStartHooks,
+} from '../utilities/hooks.js'
+import { ensurePhase4HooksBootstrapped } from '../utilities/hooks/bootstrap_hooks.js'
 import type { SdkMessage, SdkResultMessage } from '../utilities/messages/mappers.js'
-import { cloneRulesBySource } from '../utilities/permissions/rule_matching.js'
+import { loadToolPermissionContextFromSettings } from '../utilities/permissions/permissions_loader.js'
 import { writeToStdout } from '../utilities/process.js'
 import { jsonStringify } from '../utilities/slow_operations.js'
 import type { ThinkingConfig } from '../utilities/thinking.js'
@@ -141,6 +141,8 @@ export async function runHeadless(
     setMainLoopModelOverride(options.model)
   }
 
+  ensurePhase4HooksBootstrapped()
+
   const initialState = getDefaultAppState()
   const permissionMode: PermissionMode = options.dangerouslySkipPermissions
     ? 'bypassPermissions'
@@ -154,31 +156,17 @@ export async function runHeadless(
   const requestedTools = splitToolListArg(options.tools)
   const parsedJsonSchema = parseJsonSchemaOption(options.jsonSchema)
 
-  const initialPermCtx: ToolPermissionContext = {
-    ...initialState.toolPermissionContext,
-    mode: permissionMode,
-    additionalWorkingDirectories: new Map(
-      initialState.toolPermissionContext.additionalWorkingDirectories,
-    ),
-    alwaysAllowRules: {
-      ...cloneRulesBySource(initialState.toolPermissionContext.alwaysAllowRules),
-      ...(allowedCliRules?.length ? { cliArg: allowedCliRules } : {}),
-    },
-    alwaysDenyRules: {
-      ...cloneRulesBySource(initialState.toolPermissionContext.alwaysDenyRules),
-      ...(disallowedCliRules?.length ? { cliArg: disallowedCliRules } : {}),
-    },
-    alwaysAskRules: cloneRulesBySource(
-      initialState.toolPermissionContext.alwaysAskRules,
-    ),
-    ...(initialState.toolPermissionContext.strippedDangerousRules
-      ? {
-          strippedDangerousRules: cloneRulesBySource(
-            initialState.toolPermissionContext.strippedDangerousRules,
-          ),
-        }
-      : { strippedDangerousRules: undefined }),
-  }
+  const initialPermCtx: ToolPermissionContext =
+    loadToolPermissionContextFromSettings({
+      modeOverride: permissionMode,
+      allowedCliRules,
+      disallowedCliRules,
+      additionalDirectories: options.addDir,
+      shouldAvoidPermissionPrompts: true,
+      isBypassPermissionsModeAvailable: Boolean(
+        options.dangerouslySkipPermissions,
+      ),
+    })
 
   const store = createStore<AppState>(
     {
@@ -194,50 +182,23 @@ export async function runHeadless(
     ...(requestedTools !== undefined ? { allowedToolNames: requestedTools } : {}),
   })
 
-  const canUseTool: CanUseToolFn = async (
-    tool,
-    input,
-    toolUseContext,
-  ) => {
-    const typedTool = tool as AnyTool | undefined
-    if (
-      typedTool?.name === SYNTHETIC_OUTPUT_TOOL_NAME ||
-      typedTool?.name === TOOL_SEARCH_TOOL_NAME
-    ) {
-      return { behavior: 'allow', updatedInput: input }
-    }
+  const canUseTool = createCanUseTool()
 
-    if (typedTool && typeof typedTool.checkPermissions === 'function') {
-      const decision = await typedTool.checkPermissions(
-        input,
-        toolUseContext as ToolUseContext,
-      )
-      if (decision.behavior === 'allow' || decision.behavior === 'deny') {
-        return decision
-      }
-      if (permissionMode === 'bypassPermissions') {
-        return { behavior: 'allow', updatedInput: input }
-      }
-      return {
-        behavior: 'deny',
-        message:
-          'message' in decision && decision.message
-            ? `${decision.message} (Non-interactive mode cannot prompt for approval; pass --allowed-tools or --dangerously-skip-permissions.)`
-            : `Tool ${typedTool.name} requires interactive approval.`,
-        decisionReason:
-          decision.decisionReason ?? { type: 'mode', mode: permissionMode },
-      }
-    }
-
-    if (permissionMode === 'bypassPermissions') {
-      return { behavior: 'allow', updatedInput: input }
-    }
-    return {
-      behavior: 'deny',
-      message: 'Tool execution requires permission in non-interactive mode.',
-      decisionReason: { type: 'mode', mode: permissionMode },
-    }
-  }
+  const sessionStartResult = await executeSessionStartHooks({
+    source: 'startup',
+    model: options.model,
+    permissionMode: initialPermCtx.mode,
+  })
+  const sessionStartContext =
+    sessionStartResult.additionalContexts.length > 0
+      ? sessionStartResult.additionalContexts.join('\n\n')
+      : undefined
+  const effectiveAppendSystemPrompt = [
+    options.appendSystemPrompt,
+    sessionStartContext,
+  ]
+    .filter(Boolean)
+    .join('\n\n') || undefined
 
   const outputFormat = options.outputFormat ?? 'text'
   const isTextStreaming = outputFormat === 'text'
@@ -251,7 +212,7 @@ export async function runHeadless(
     getAppState: () => store.getState(),
     setAppState: updater => store.setState(updater),
     customSystemPrompt: options.systemPrompt,
-    appendSystemPrompt: options.appendSystemPrompt,
+    appendSystemPrompt: effectiveAppendSystemPrompt,
     userSpecifiedModel: options.model,
     fallbackModel: options.fallbackModel,
     thinkingConfig: resolveThinkingConfig(options),
@@ -375,6 +336,11 @@ export async function runHeadless(
       break
     }
   }
+
+  await executeSessionEndHooks({
+    reason: exitCode === 0 ? 'other' : 'error',
+    permissionMode: store.getState().toolPermissionContext.mode,
+  })
 
   logHeadlessProfilerTurn()
   saveCurrentSessionCosts()

@@ -8,6 +8,8 @@ import type { BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages
 import type { QuerySource } from '../constants/query_source.js'
 import { queryModelWithStreaming } from '../services/api/claude.js'
 import { runTools } from '../services/tools/tool_orchestration.js'
+import { ensurePhase4HooksBootstrapped } from '../utilities/hooks/bootstrap_hooks.js'
+import { handleStopHooks } from './stop_hooks.js'
 import type {
   CanUseToolFn,
   CompactionResult,
@@ -106,11 +108,13 @@ export interface QueryDeps {
  * and connect to the multi-tier compaction pipeline in Phase 7.
  */
 export function productionDeps(): QueryDeps {
+  ensurePhase4HooksBootstrapped()
   return {
     callModel: queryModelWithStreaming,
     microcompact: async messages => ({ messages }),
     autocompact: async () => ({ wasCompacted: false }),
     uuid: () => randomUUID(),
     runTools,
+    handleStopHooks,
   }
 }

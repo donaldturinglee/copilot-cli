@@ -5,7 +5,7 @@
 import {
   loadNativeImageProcessor,
   type NativeImageProcessor,
-} from '../../../vendor/image-processor-src/index.js'
+} from '../../../native/image_processor/index.js'
 
 let cachedProcessor: NativeImageProcessor | null | undefined
 

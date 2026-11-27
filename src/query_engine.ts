@@ -42,6 +42,8 @@ import type { Message } from './types/message.js'
 import { createAbortController } from './utilities/abort_controller.js'
 import { randomUUID } from './utilities/crypto.js'
 import { getFastModeState } from './utilities/fast_mode.js'
+import { executeUserPromptSubmitHooks } from './utilities/hooks.js'
+import { ensurePhase4HooksBootstrapped } from './utilities/hooks/bootstrap_hooks.js'
 import {
   headlessProfilerCheckpoint,
   headlessProfilerStartTurn,
@@ -209,6 +211,7 @@ export class QueryEngine {
     prompt: string | ContentBlockParam[],
     options?: SubmitMessageOptions,
   ): AsyncGenerator<SdkMessage, void> {
+    ensurePhase4HooksBootstrapped()
     headlessProfilerStartTurn()
     this.discoveredSkillNames.clear()
     setCwdState(this.config.cwd)
@@ -291,12 +294,62 @@ export class QueryEngine {
       appendSystemPrompt: effectiveAppendSystemPrompt,
     })
 
+    const promptText =
+      typeof prompt === 'string'
+        ? prompt
+        : prompt
+            .filter(b => b.type === 'text')
+            .map(b => b.text)
+            .join('\n')
+
+    const userPromptHookRes = await executeUserPromptSubmitHooks({
+      prompt: promptText,
+      permissionMode: appState.toolPermissionContext.mode,
+      signal: this.abortController.signal,
+    })
+
+    if (
+      userPromptHookRes.blockingErrors.length > 0 ||
+      userPromptHookRes.preventContinuation
+    ) {
+      const errors =
+        userPromptHookRes.blockingErrors.length > 0
+          ? userPromptHookRes.blockingErrors.map(e => e.blockingError)
+          : [userPromptHookRes.stopReason ?? 'Blocked by UserPromptSubmit hook']
+      yield {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        duration_ms: Date.now() - startTime,
+        duration_api_ms: getTotalApiDuration(),
+        num_turns: 0,
+        stop_reason: null,
+        session_id: sessionId,
+        total_cost_usd: getTotalCostUsd(),
+        usage: { ...this.totalUsage },
+        modelUsage: toWireModelUsage(),
+        permission_denials: [...this.permissionDenials],
+        fast_mode_state: getFastModeState(mainLoopModel, appState.fastMode),
+        uuid: randomUUID(),
+        errors,
+      }
+      return
+    }
+
     const userMsg = createUserMessage({
       content: prompt,
       uuid: options?.uuid,
       isMeta: options?.isMeta,
     })
     this.mutableMessages.push(userMsg)
+    if (userPromptHookRes.additionalContexts.length > 0) {
+      this.mutableMessages.push(
+        createUserMessage({
+          content: `<system-reminder>\n${userPromptHookRes.additionalContexts.join('\n')}\n</system-reminder>`,
+          isMeta: true,
+        }),
+      )
+    }
     const messages: Message[] = [...this.mutableMessages]
 
     const fastModeState = getFastModeState(mainLoopModel, appState.fastMode)

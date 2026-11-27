@@ -20,6 +20,6 @@
     },
     "types": ["bun-types", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "tests/**/*.tsx", "scripts/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "native/**/*.ts", "tests/**/*.ts", "tests/**/*.tsx", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

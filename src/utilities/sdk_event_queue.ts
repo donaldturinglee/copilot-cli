@@ -51,11 +51,46 @@ type SessionStateChangedEvent = {
   state: 'idle' | 'running' | 'requires_action'
 }
 
+type HookStartedSdkEvent = {
+  type: 'system'
+  subtype: 'hook_started'
+  hook_id: string
+  hook_name: string
+  hook_event: string
+}
+
+type HookProgressSdkEvent = {
+  type: 'system'
+  subtype: 'hook_progress'
+  hook_id: string
+  hook_name: string
+  hook_event: string
+  stdout: string
+  stderr: string
+  output: string
+}
+
+type HookResponseSdkEvent = {
+  type: 'system'
+  subtype: 'hook_response'
+  hook_id: string
+  hook_name: string
+  hook_event: string
+  output: string
+  stdout: string
+  stderr: string
+  exit_code?: number
+  outcome: 'success' | 'error' | 'cancelled'
+}
+
 export type SdkEvent =
   | TaskStartedEvent
   | TaskProgressEvent
   | TaskNotificationSdkEvent
   | SessionStateChangedEvent
+  | HookStartedSdkEvent
+  | HookProgressSdkEvent
+  | HookResponseSdkEvent
 
 const MAX_QUEUE_SIZE = 1000
 const queue: SdkEvent[] = []

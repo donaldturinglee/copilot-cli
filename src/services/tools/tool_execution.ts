@@ -28,6 +28,7 @@ import {
   createProgressMessage,
   createUserMessage,
 } from '../../utilities/messages.js'
+import { checkRuleBasedPermissions } from '../../utilities/permissions/permissions.js'
 import { clone } from '../../utilities/slow_operations.js'
 import { Stream } from '../../utilities/stream.js'
 import {
@@ -36,6 +37,7 @@ import {
 } from '../../utilities/tool_errors.js'
 import { processPreMappedToolResultBlock } from '../../utilities/tool_result_storage.js'
 import {
+  runPermissionDeniedHooks,
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
@@ -201,6 +203,16 @@ export async function* runToolUse(
   }
   if (preHook.decision === 'deny') {
     const reason = preHook.reason || `Tool ${tool.name} denied by PreToolUse hook.`
+    const deniedHooks = await runPermissionDeniedHooks({
+      tool,
+      input: validatedInput,
+      reason,
+      toolUseId: toolUse.id,
+      context: toolUseContext,
+    })
+    for (const msg of deniedHooks.messages) {
+      yield { message: msg }
+    }
     yield {
       message: createToolErrorUserMessage(
         toolUse.id,
@@ -212,8 +224,13 @@ export async function* runToolUse(
     return
   }
 
+  let inputWasUpdatedByHook = false
   if (preHook.updatedInput) {
-    const reParsed = tool.inputSchema.safeParse(preHook.updatedInput)
+    const mergedInput = {
+      ...validatedInput,
+      ...preHook.updatedInput,
+    }
+    const reParsed = tool.inputSchema.safeParse(mergedInput)
     if (!reParsed.success) {
       const errText = formatZodValidationError(tool.name, reParsed.error)
       yield {
@@ -227,22 +244,108 @@ export async function* runToolUse(
       return
     }
     validatedInput = reParsed.data as Record<string, unknown>
+    inputWasUpdatedByHook = true
+  }
+
+  // SECURITY INVARIANT: A `PreToolUse` hook returning `updatedInput` or
+  // `permissionDecision: 'allow'` MUST NEVER bypass explicit `deny` rules or
+  // sensitive-path `safetyCheck`! Always re-evaluate rule-based permissions.
+  if (inputWasUpdatedByHook || preHook.decision === 'allow') {
+    const ruleRecheck = await checkRuleBasedPermissions(
+      tool,
+      validatedInput,
+      toolUseContext,
+    )
+    if (ruleRecheck.behavior === 'deny') {
+      const denyReason =
+        ruleRecheck.message ||
+        `Tool ${tool.name} denied by security rule after PreToolUse hook.`
+      const deniedHooks = await runPermissionDeniedHooks({
+        tool,
+        input: validatedInput,
+        reason: denyReason,
+        toolUseId: toolUse.id,
+        context: toolUseContext,
+      })
+      for (const msg of deniedHooks.messages) {
+        yield { message: msg }
+      }
+      yield {
+        message: createToolErrorUserMessage(
+          toolUse.id,
+          denyReason,
+          assistantMessage.uuid,
+        ),
+        isError: true,
+      }
+      return
+    }
+    if (
+      ruleRecheck.behavior === 'ask' &&
+      ruleRecheck.decisionReason?.type === 'safetyCheck'
+    ) {
+      const safetyReason = ruleRecheck.message
+      const deniedHooks = await runPermissionDeniedHooks({
+        tool,
+        input: validatedInput,
+        reason: safetyReason,
+        toolUseId: toolUse.id,
+        context: toolUseContext,
+      })
+      for (const msg of deniedHooks.messages) {
+        yield { message: msg }
+      }
+      yield {
+        message: createToolErrorUserMessage(
+          toolUse.id,
+          safetyReason,
+          assistantMessage.uuid,
+        ),
+        isError: true,
+      }
+      return
+    }
   }
 
   // 4. Permission gate (`canUseTool`)
-  const permissionResult = await canUseTool(
-    tool,
-    validatedInput,
-    toolUseContext,
-    assistantMessage,
-    toolUse.id,
-  )
+  // If a `PreToolUse` hook explicitly returned `allow` AND passed the rule/safetyCheck
+  // re-evaluation above (and is not explicitly `ask`), honor the hook allow decision.
+  let permissionResult: Awaited<ReturnType<CanUseToolFn>>
+  if (preHook.decision === 'allow') {
+    permissionResult = {
+      behavior: 'allow',
+      updatedInput: validatedInput,
+      decisionReason: {
+        type: 'hook',
+        hookName: 'PreToolUse',
+        reason: preHook.reason,
+      },
+    }
+  } else {
+    permissionResult = await canUseTool(
+      tool,
+      validatedInput,
+      toolUseContext,
+      assistantMessage,
+      toolUse.id,
+    )
+  }
 
   if (permissionResult.behavior !== 'allow') {
     const denyReason =
       'message' in permissionResult && permissionResult.message
         ? permissionResult.message
         : `Permission denied for tool ${tool.name}.`
+    const deniedHooks = await runPermissionDeniedHooks({
+      tool,
+      input: validatedInput,
+      reason: denyReason,
+      toolUseId: toolUse.id,
+      context: toolUseContext,
+    })
+    for (const msg of deniedHooks.messages) {
+      yield { message: msg }
+    }
     yield {
       message: createToolErrorUserMessage(
         toolUse.id,

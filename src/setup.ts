@@ -6,6 +6,8 @@ import type { PermissionMode } from './types/permissions.js'
 import { getCurrentProjectConfig } from './utilities/config.js'
 import { logForDiagnosticsNoPii } from './utilities/diag_logs.js'
 import { isBareMode, isEnvTruthy } from './utilities/env_utils.js'
+import { ensurePhase4HooksBootstrapped } from './utilities/hooks/bootstrap_hooks.js'
+import { captureHooksConfigSnapshot } from './utilities/hooks/hooks_config_snapshot.js'
 
 export type SetupHooks = {
   initSinks?: () => void
@@ -86,6 +88,8 @@ export async function setup(
   }
 
   setCwdState(cwd)
+  ensurePhase4HooksBootstrapped()
+  captureHooksConfigSnapshot()
 
   if (!isBareMode() && setupHooks.onSetupNonBare) {
     await setupHooks.onSetupNonBare({

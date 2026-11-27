@@ -13,15 +13,10 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { z } from 'zod/v4'
 import { buildTool, type ToolCallProgress, type ToolUseContext } from '../../tool.js'
-import { getEmptyToolPermissionContext } from '../../types/permissions.js'
 import type { BashProgress } from '../../types/tools.js'
 import { getCwd } from '../../utilities/cwd.js'
 import { ShellError } from '../../utilities/errors.js'
-import {
-  formatPermissionRuleValue,
-  getRulesForTool,
-  matchWildcardPattern,
-} from '../../utilities/permissions/rule_matching.js'
+import { SandboxManager } from '../../utilities/sandbox/sandbox_adapter.js'
 import { exec } from '../../utilities/shell.js'
 import { BASH_MAX_OUTPUT_DEFAULT } from '../../utilities/shell/output_limits.js'
 import { isSimpleReadOnlyCommand } from '../../utilities/shell/read_only_command_validation.js'
@@ -31,8 +26,10 @@ import {
   getMaxBashTimeoutMs,
 } from '../../utilities/shell_config.js'
 import { trackGitOperations } from '../shared/git_operation_tracking.js'
+import { bashToolHasPermission } from './bash_permissions.js'
 import { interpretCommandResult } from './command_semantics.js'
 import { BASH_TOOL_DESCRIPTION, BASH_TOOL_PROMPT } from './prompt.js'
+import { shouldUseSandbox } from './should_use_sandbox.js'
 import { BASH_TOOL_NAME } from './tool_name.js'
 import { extractImageDataUri, truncateShellOutput } from './utils.js'
 
@@ -107,73 +104,7 @@ export const BashTool = buildTool<BashInput, BashOutput, BashProgress>({
   },
 
   async checkPermissions(input, context) {
-    const permCtx =
-      context.getAppState?.().toolPermissionContext ??
-      getEmptyToolPermissionContext()
-
-    const denyRules = getRulesForTool(permCtx, { name: BASH_TOOL_NAME }, 'deny')
-    for (const rule of denyRules) {
-      const pat = rule.ruleValue.ruleContent
-      if (pat === undefined || matchWildcardPattern(input.command, pat)) {
-        return {
-          behavior: 'deny',
-          message: `Command denied by rule ${formatPermissionRuleValue(rule.ruleValue)}.`,
-          decisionReason: { type: 'rule', rule },
-        }
-      }
-    }
-
-    const askRules = getRulesForTool(permCtx, { name: BASH_TOOL_NAME }, 'ask')
-    for (const rule of askRules) {
-      const pat = rule.ruleValue.ruleContent
-      if (pat === undefined || matchWildcardPattern(input.command, pat)) {
-        return {
-          behavior: 'ask',
-          message: `Permission required to run command: ${input.command}`,
-          updatedInput: input,
-          decisionReason: { type: 'rule', rule },
-        }
-      }
-    }
-
-    if (permCtx.mode === 'bypassPermissions') {
-      return {
-        behavior: 'allow',
-        updatedInput: input,
-        decisionReason: { type: 'mode', mode: 'bypassPermissions' },
-      }
-    }
-
-    const allowRules = getRulesForTool(
-      permCtx,
-      { name: BASH_TOOL_NAME },
-      'allow',
-    )
-    for (const rule of allowRules) {
-      const pat = rule.ruleValue.ruleContent
-      if (pat === undefined || matchWildcardPattern(input.command, pat)) {
-        return {
-          behavior: 'allow',
-          updatedInput: input,
-          decisionReason: { type: 'rule', rule },
-        }
-      }
-    }
-
-    if (isSimpleReadOnlyCommand(input.command)) {
-      return {
-        behavior: 'allow',
-        updatedInput: input,
-        decisionReason: { type: 'other', reason: 'Read-only shell command' },
-      }
-    }
-
-    return {
-      behavior: 'ask',
-      message: `Allow running command: ${input.command}`,
-      updatedInput: input,
-      decisionReason: { type: 'mode', mode: permCtx.mode },
-    }
+    return bashToolHasPermission(input, context)
   },
 
   async validateInput(input) {
@@ -215,6 +146,7 @@ export const BashTool = buildTool<BashInput, BashOutput, BashProgress>({
       getMaxBashTimeoutMs(),
     )
     const runInBackground = Boolean(input.run_in_background)
+    const sandboxed = shouldUseSandbox(input)
 
     const shellCmd = await exec(
       input.command,
@@ -224,6 +156,7 @@ export const BashTool = buildTool<BashInput, BashOutput, BashProgress>({
         timeoutMs,
         cwd: getCwd(),
         runInBackground,
+        useSandbox: sandboxed,
         onProgress: onProgress
           ? progress => {
               onProgress({
@@ -284,17 +217,24 @@ export const BashTool = buildTool<BashInput, BashOutput, BashProgress>({
 
     trackGitOperations(input.command, result.code, result.stdout)
 
+    const annotatedStderr = sandboxed
+      ? SandboxManager.annotateStderrWithSandboxFailures(
+          input.command,
+          result.stderr,
+        )
+      : result.stderr
+
     const semantics = interpretCommandResult(
       input.command,
       result.code,
       result.stdout,
-      result.stderr,
+      annotatedStderr,
     )
 
     if (result.code !== 0 && semantics.isError && !result.backgroundTaskId) {
       throw new ShellError(
         result.stdout,
-        result.stderr,
+        annotatedStderr,
         result.code,
         result.interrupted,
       )
@@ -302,7 +242,7 @@ export const BashTool = buildTool<BashInput, BashOutput, BashProgress>({
 
     const imageData = extractImageDataUri(result.stdout)
     const truncatedOut = truncateShellOutput(result.stdout)
-    const truncatedErr = truncateShellOutput(result.stderr)
+    const truncatedErr = truncateShellOutput(annotatedStderr)
 
     return {
       data: {

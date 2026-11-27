@@ -20,9 +20,13 @@ export const BashCommandHookSchema = lazySchema(() =>
   z.object({
     type: z.literal('command'),
     command: z.string(),
+    if: z.string().optional(),
+    shell: z.enum(['bash', 'powershell']).optional(),
     timeout: z.number().positive().optional(),
     statusMessage: z.string().optional(),
+    once: z.boolean().optional(),
     async: z.boolean().optional(),
+    asyncRewake: z.boolean().optional(),
   }),
 )
 
@@ -30,9 +34,11 @@ export const PromptHookSchema = lazySchema(() =>
   z.object({
     type: z.literal('prompt'),
     prompt: z.string(),
+    if: z.string().optional(),
     model: z.string().optional(),
     timeout: z.number().positive().optional(),
     statusMessage: z.string().optional(),
+    once: z.boolean().optional(),
   }),
 )
 
@@ -40,9 +46,11 @@ export const AgentHookSchema = lazySchema(() =>
   z.object({
     type: z.literal('agent'),
     prompt: z.string(),
+    if: z.string().optional(),
     model: z.string().optional(),
     timeout: z.number().positive().optional(),
     statusMessage: z.string().optional(),
+    once: z.boolean().optional(),
   }),
 )
 
@@ -50,10 +58,12 @@ export const HttpHookSchema = lazySchema(() =>
   z.object({
     type: z.literal('http'),
     url: z.string(),
+    if: z.string().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),
     timeout: z.number().positive().optional(),
     statusMessage: z.string().optional(),
+    once: z.boolean().optional(),
   }),
 )
 

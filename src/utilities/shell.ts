@@ -17,6 +17,7 @@ import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './env_utils.js'
 import { getPlatform } from './platform.js'
+import { SandboxManager } from './sandbox/sandbox_adapter.js'
 import { getSessionEnvFiles } from './session_environment.js'
 import { getSessionEnvVars } from './session_env_vars.js'
 import { BashProvider } from './shell/bash_provider.js'
@@ -190,6 +191,7 @@ export interface ShellExecOptions {
   env?: Record<string, string | undefined>
   runInBackground?: boolean
   persistCwd?: boolean
+  useSandbox?: boolean
   onProgress?: (progress: ShellCommandProgress) => void
   onBackgroundExit?: (result: ExecResult) => void
 }
@@ -236,13 +238,27 @@ export async function exec(
   const shellPrefix =
     shellKind === 'bash' ? process.env.COPILOT_CLI_SHELL_PREFIX : undefined
 
-  const wrappedScript = provider.buildCommand({
+  let wrappedScript = provider.buildCommand({
     command,
     cwdFile,
     snapshotPath,
     envFiles,
     shellPrefix,
   })
+
+  const sandboxActive =
+    shellKind === 'bash' &&
+    Boolean(options.useSandbox) &&
+    SandboxManager.isSandboxingEnabled()
+
+  if (sandboxActive) {
+    wrappedScript = await SandboxManager.wrapWithSandbox(
+      wrappedScript,
+      provider.shellPath,
+      undefined,
+      abortSignal,
+    )
+  }
 
   const spawnArgs = provider.getSpawnArgs(wrappedScript, {
     hasSnapshot: Boolean(snapshotPath),
@@ -270,6 +286,9 @@ export async function exec(
     abortSignal,
     onProgress: options.onProgress,
     onBackgroundExit: result => {
+      if (sandboxActive) {
+        SandboxManager.cleanupAfterCommand()
+      }
       try {
         unlinkSync(cwdFile)
       } catch {
@@ -284,9 +303,13 @@ export async function exec(
     return shellCmd
   }
 
-  // Wrap result promise to synchronously persist CWD before caller resumes
+  // Wrap result promise to synchronously run sandbox cleanup (bare-repo scrub)
+  // and persist CWD before caller resumes
   const persistedResult = shellCmd.result.then(res => {
     try {
+      if (sandboxActive) {
+        SandboxManager.cleanupAfterCommand()
+      }
       if (persistCwd && !res.backgroundTaskId && existsSync(cwdFile)) {
         const rawCwd = readFileSync(cwdFile, 'utf8')
         const nextCwd = parseCapturedCwd(rawCwd)

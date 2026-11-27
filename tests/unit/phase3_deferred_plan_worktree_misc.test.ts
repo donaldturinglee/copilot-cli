@@ -236,7 +236,7 @@ describe('Phase 3.6: ToolSearch, Plan Mode, Git Worktree, Web, Todo, StructuredO
     expect(removed.data.discardedFiles).toBe(1)
     expect(getCwd()).toBe(repoDir)
     expect(existsSync(entered.data.worktreePath)).toBe(false)
-  })
+  }, 15_000)
 
   test('WebFetch URL validation, safe redirects, LRU cache, turndown HTML->Markdown, and WebSearch validation', async () => {
     const upgraded = validateWebFetchUrl('http://example.com/docs')

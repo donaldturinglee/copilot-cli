@@ -777,3 +777,10 @@ export function rawSettingsContainsKey(key: string): boolean {
   }
   return false
 }
+
+/**
+ * Canonical merged settings accessor across all enabled 6-tier sources.
+ */
+export function getSettings(): SettingsJson {
+  return getInitialSettings()
+}

@@ -2,7 +2,8 @@
  * Cross-platform shell provider abstraction (`BashProvider` / `PowerShellProvider`).
  */
 
-export type ShellKind = 'bash' | 'powershell'
+export const SHELL_TYPES = ['bash', 'powershell'] as const
+export type ShellKind = (typeof SHELL_TYPES)[number]
 
 export interface ShellCommandBuildOptions {
   command: string

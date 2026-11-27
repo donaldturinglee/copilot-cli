@@ -28,6 +28,11 @@ export interface PostToolUseFailureHookOutcome {
   messages: Message[]
 }
 
+export interface PermissionDeniedHookOutcome {
+  retry?: boolean
+  messages: Message[]
+}
+
 export interface ToolHookRunner {
   runPreToolUse?: (params: {
     tool: AnyTool
@@ -49,6 +54,13 @@ export interface ToolHookRunner {
     toolUseId: string
     context: ToolUseContext
   }) => Promise<Partial<PostToolUseFailureHookOutcome>>
+  runPermissionDenied?: (params: {
+    tool: AnyTool
+    input: Record<string, unknown>
+    reason: string
+    toolUseId: string
+    context: ToolUseContext
+  }) => Promise<Partial<PermissionDeniedHookOutcome>>
 }
 
 let activeHookRunner: ToolHookRunner | null = null
@@ -143,6 +155,23 @@ export async function runPostToolUseFailureHooks(params: {
   const outcome = await activeHookRunner.runPostToolUseFailure(params)
   return {
     additionalContext: outcome.additionalContext ?? [],
+    messages: outcome.messages ?? [],
+  }
+}
+
+export async function runPermissionDeniedHooks(params: {
+  tool: AnyTool
+  input: Record<string, unknown>
+  reason: string
+  toolUseId: string
+  context: ToolUseContext
+}): Promise<PermissionDeniedHookOutcome> {
+  if (!activeHookRunner?.runPermissionDenied) {
+    return { messages: [] }
+  }
+  const outcome = await activeHookRunner.runPermissionDenied(params)
+  return {
+    retry: outcome.retry,
     messages: outcome.messages ?? [],
   }
 }

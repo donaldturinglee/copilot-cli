@@ -9,15 +9,9 @@
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { z } from 'zod/v4'
 import { buildTool, type ToolCallProgress, type ToolUseContext } from '../../tool.js'
-import { getEmptyToolPermissionContext } from '../../types/permissions.js'
 import type { PowerShellProgress } from '../../types/tools.js'
 import { getCwd } from '../../utilities/cwd.js'
 import { ShellError } from '../../utilities/errors.js'
-import {
-  formatPermissionRuleValue,
-  getRulesForTool,
-  matchWildcardPattern,
-} from '../../utilities/permissions/rule_matching.js'
 import { exec } from '../../utilities/shell.js'
 import { BASH_MAX_OUTPUT_DEFAULT } from '../../utilities/shell/output_limits.js'
 import { findPowerShell } from '../../utilities/shell/powershell_detection.js'
@@ -32,6 +26,7 @@ import {
 import { truncateShellOutput } from '../bash_tool/utils.js'
 import { trackGitOperations } from '../shared/git_operation_tracking.js'
 import { interpretPowerShellResult } from './command_semantics.js'
+import { powershellToolHasPermission } from './powershell_permissions.js'
 import {
   POWERSHELL_TOOL_DESCRIPTION,
   POWERSHELL_TOOL_PROMPT,
@@ -105,56 +100,7 @@ export const PowerShellTool = buildTool<
   },
 
   async checkPermissions(input, context) {
-    const permCtx =
-      context.getAppState?.().toolPermissionContext ??
-      getEmptyToolPermissionContext()
-
-    const denyRules = getRulesForTool(
-      permCtx,
-      { name: POWERSHELL_TOOL_NAME },
-      'deny',
-    )
-    for (const rule of denyRules) {
-      const pat = rule.ruleValue.ruleContent
-      if (pat === undefined || matchWildcardPattern(input.command, pat)) {
-        return {
-          behavior: 'deny',
-          message: `PowerShell command denied by rule ${formatPermissionRuleValue(rule.ruleValue)}.`,
-          decisionReason: { type: 'rule', rule },
-        }
-      }
-    }
-
-    if (permCtx.mode === 'bypassPermissions') {
-      return {
-        behavior: 'allow',
-        updatedInput: input,
-        decisionReason: { type: 'mode', mode: 'bypassPermissions' },
-      }
-    }
-
-    const allowRules = getRulesForTool(
-      permCtx,
-      { name: POWERSHELL_TOOL_NAME },
-      'allow',
-    )
-    for (const rule of allowRules) {
-      const pat = rule.ruleValue.ruleContent
-      if (pat === undefined || matchWildcardPattern(input.command, pat)) {
-        return {
-          behavior: 'allow',
-          updatedInput: input,
-          decisionReason: { type: 'rule', rule },
-        }
-      }
-    }
-
-    return {
-      behavior: 'ask',
-      message: `Allow running PowerShell command: ${input.command}`,
-      updatedInput: input,
-      decisionReason: { type: 'mode', mode: permCtx.mode },
-    }
+    return powershellToolHasPermission(input, context)
   },
 
   async validateInput(input) {

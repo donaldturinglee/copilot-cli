@@ -6,9 +6,8 @@
  * AST rules, and classifiers while preserving these contracts.
  */
 
-import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'path'
+import { relative } from 'path'
 import picomatch from 'picomatch'
-import { getOriginalCwd } from '../../bootstrap/state.js'
 import type {
   AdditionalWorkingDirectory,
   PermissionBehavior,
@@ -22,9 +21,13 @@ import type {
 } from '../../types/permissions.js'
 import type { DeepImmutable } from '../../types/utils.js'
 import { getCwd } from '../cwd.js'
-import { getPathsForPermissionCheck } from '../fs_operations.js'
 import { expandPath } from '../path.js'
 import { getPlatform } from '../platform.js'
+import {
+  checkReadPermissionForTool as checkReadPermissionFromFs,
+  checkWritePermissionForTool as checkWritePermissionFromFs,
+  pathInAllowedWorkingPath as pathInAllowedWorkingPathFromFs,
+} from './filesystem.js'
 
 const RULE_SOURCES_PRECEDENCE: readonly PermissionRuleSource[] = [
   'policySettings',
@@ -225,21 +228,6 @@ export function getFileReadIgnorePatterns(
   return patterns
 }
 
-function normalizeForContainment(filePath: string): string {
-  const resolved = normalize(resolve(filePath))
-  return getPlatform() === 'windows' ? resolved.toLowerCase() : resolved
-}
-
-function isPathInsideDir(targetPath: string, dirPath: string): boolean {
-  const normTarget = normalizeForContainment(targetPath)
-  const normDir = normalizeForContainment(dirPath)
-  if (normTarget === normDir) {
-    return true
-  }
-  const prefix = normDir.endsWith(sep) ? normDir : `${normDir}${sep}`
-  return normTarget.startsWith(prefix)
-}
-
 /**
  * Checks whether `targetPath` lies within the current working directory,
  * original working directory, or any configured `additionalWorkingDirectories`.
@@ -248,46 +236,12 @@ export function pathInAllowedWorkingPath(
   targetPath: string,
   permissionContext: DeepImmutable<ToolPermissionContext>,
 ): boolean {
-  const absolute = isAbsolute(targetPath)
-    ? targetPath
-    : expandPath(targetPath)
-  const pathsToCheck = getPathsForPermissionCheck(absolute)
-
-  const allowedDirs = new Set<string>([getCwd(), getOriginalCwd()])
-  for (const [dirPath] of permissionContext.additionalWorkingDirectories) {
-    allowedDirs.add(dirPath)
-  }
-
-  return pathsToCheck.every(candidate => {
-    for (const dir of allowedDirs) {
-      if (isPathInsideDir(candidate, dir)) {
-        return true
-      }
-    }
-    return false
-  })
-}
-
-function findMatchingPathRule(
-  filePath: string,
-  rules: readonly PermissionRule[],
-): PermissionRule | undefined {
-  const pathsToCheck = getPathsForPermissionCheck(expandPath(filePath))
-  for (const rule of rules) {
-    const content = rule.ruleValue.ruleContent
-    if (content === undefined) {
-      return rule
-    }
-    if (pathsToCheck.some(p => matchWildcardPattern(p, content))) {
-      return rule
-    }
-  }
-  return undefined
+  return pathInAllowedWorkingPathFromFs(targetPath, permissionContext)
 }
 
 /**
  * Evaluates read permission for a file or directory path against deny/ask/allow
- * rules and working-directory boundaries.
+ * rules, suspicious Windows path guards, and working-directory boundaries.
  */
 export function checkReadPermissionForTool<Input extends Record<string, unknown>>(
   tool: { readonly name: string; readonly aliases?: readonly string[] },
@@ -295,70 +249,13 @@ export function checkReadPermissionForTool<Input extends Record<string, unknown>
   filePath: string,
   permissionContext: DeepImmutable<ToolPermissionContext>,
 ): PermissionResult<Input> {
-  const denyMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'deny'),
-  )
-  if (denyMatch) {
-    return {
-      behavior: 'deny',
-      message: `Access to ${filePath} is denied by permission rule ${formatPermissionRuleValue(denyMatch.ruleValue)}.`,
-      decisionReason: { type: 'rule', rule: denyMatch },
-    }
-  }
-
-  const askMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'ask'),
-  )
-  if (askMatch) {
-    return {
-      behavior: 'ask',
-      message: `Permission required to read ${filePath}.`,
-      updatedInput: input,
-      decisionReason: { type: 'rule', rule: askMatch },
-      blockedPath: filePath,
-    }
-  }
-
-  const allowMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'allow'),
-  )
-  if (allowMatch) {
-    return {
-      behavior: 'allow',
-      updatedInput: input,
-      decisionReason: { type: 'rule', rule: allowMatch },
-    }
-  }
-
-  if (
-    permissionContext.mode === 'bypassPermissions' ||
-    pathInAllowedWorkingPath(filePath, permissionContext)
-  ) {
-    return {
-      behavior: 'allow',
-      updatedInput: input,
-      decisionReason: { type: 'workingDir', reason: 'Path is in working directory' },
-    }
-  }
-
-  return {
-    behavior: 'ask',
-    message: `File ${filePath} is outside the allowed working directories.`,
-    updatedInput: input,
-    blockedPath: filePath,
-    decisionReason: {
-      type: 'workingDir',
-      reason: `Outside working directory (${dirname(filePath)})`,
-    },
-  }
+  return checkReadPermissionFromFs(tool, input, filePath, permissionContext)
 }
 
 /**
- * Evaluates write/edit permission for a file path against deny/ask/allow rules
- * and permission mode (`acceptEdits` / `bypassPermissions` / `plan`).
+ * Evaluates write/edit permission for a file path against deny rules,
+ * sensitive-path `safetyCheck` (immune to `bypassPermissions`), ask rules,
+ * `plan` mode, allow rules, and `acceptEdits`.
  */
 export function checkWritePermissionForTool<
   Input extends Record<string, unknown>,
@@ -368,71 +265,7 @@ export function checkWritePermissionForTool<
   filePath: string,
   permissionContext: DeepImmutable<ToolPermissionContext>,
 ): PermissionResult<Input> {
-  const denyMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'deny'),
-  )
-  if (denyMatch) {
-    return {
-      behavior: 'deny',
-      message: `Editing ${filePath} is denied by permission rule ${formatPermissionRuleValue(denyMatch.ruleValue)}.`,
-      decisionReason: { type: 'rule', rule: denyMatch },
-    }
-  }
-
-  const askMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'ask'),
-  )
-  if (askMatch) {
-    return {
-      behavior: 'ask',
-      message: `Permission required to edit ${filePath}.`,
-      updatedInput: input,
-      decisionReason: { type: 'rule', rule: askMatch },
-      blockedPath: filePath,
-    }
-  }
-
-  if (permissionContext.mode === 'plan') {
-    return {
-      behavior: 'deny',
-      message: `Cannot edit ${filePath} while in plan mode.`,
-      decisionReason: { type: 'mode', mode: 'plan' },
-    }
-  }
-
-  const allowMatch = findMatchingPathRule(
-    filePath,
-    getRulesForTool(permissionContext, tool, 'allow'),
-  )
-  if (allowMatch) {
-    return {
-      behavior: 'allow',
-      updatedInput: input,
-      decisionReason: { type: 'rule', rule: allowMatch },
-    }
-  }
-
-  if (
-    permissionContext.mode === 'bypassPermissions' ||
-    (permissionContext.mode === 'acceptEdits' &&
-      pathInAllowedWorkingPath(filePath, permissionContext))
-  ) {
-    return {
-      behavior: 'allow',
-      updatedInput: input,
-      decisionReason: { type: 'mode', mode: permissionContext.mode },
-    }
-  }
-
-  return {
-    behavior: 'ask',
-    message: `Allow editing ${filePath}?`,
-    updatedInput: input,
-    blockedPath: filePath,
-    decisionReason: { type: 'mode', mode: permissionContext.mode },
-  }
+  return checkWritePermissionFromFs(tool, input, filePath, permissionContext)
 }
 
 export function cloneRulesBySource(
