@@ -906,6 +906,19 @@ export function createCliProgram(argv: string[] = process.argv) {
         dangerouslySkipPermissions: Boolean(options.dangerouslySkipPermissions),
         includePartialMessages: Boolean(options.includePartialMessages),
         replayUserMessages: Boolean(options.replayUserMessages),
+        jsonSchema:
+          typeof options.jsonSchema === 'string'
+            ? options.jsonSchema
+            : undefined,
+        tools: Array.isArray(options.tools)
+          ? (options.tools as string[])
+          : undefined,
+        allowedTools: Array.isArray(options.allowedTools)
+          ? (options.allowedTools as string[])
+          : undefined,
+        disallowedTools: Array.isArray(options.disallowedTools)
+          ? (options.disallowedTools as string[])
+          : undefined,
       })
       return
     }

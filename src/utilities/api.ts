@@ -8,12 +8,20 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../constants/prompts.js'
 import { CLI_SYSPROMPT_PREFIXES } from '../constants/system.js'
 import type { Tool } from '../types/forward.js'
 import type { Message } from '../types/message.js'
-import { registerAuthCacheInvalidator } from './auth.js'
+import { getEmptyToolPermissionContext } from '../types/permissions.js'
 import { shouldUseGlobalCacheScope } from './betas.js'
 import { isEnvTruthy } from './env_utils.js'
 import { createUserMessage } from './messages.js'
 import { jsonStringify } from './slow_operations.js'
 import type { SystemPrompt } from './system_prompt_type.js'
+import {
+  clearToolSchemaCache,
+  getToolSchemaCache,
+} from './tool_schema_cache.js'
+import { zodToJsonSchema } from './zod_to_json_schema.js'
+import type { ZodTypeAny } from 'zod/v4'
+
+export { clearToolSchemaCache }
 
 export type CacheScope = 'global' | 'org'
 
@@ -31,17 +39,6 @@ export interface ApiToolSchema {
   defer_loading?: boolean
   cache_control?: Record<string, unknown>
 }
-
-const toolSchemaCache = new Map<string, Omit<ApiToolSchema, 'defer_loading' | 'cache_control'>>()
-
-/**
- * Clears the cached tool-to-API schema serialization table.
- */
-export function clearToolSchemaCache(): void {
-  toolSchemaCache.clear()
-}
-
-registerAuthCacheInvalidator(clearToolSchemaCache)
 
 /**
  * Splits a finalized system prompt array into cache-scoped blocks:
@@ -179,6 +176,9 @@ export async function toolToApiSchema(
   options?: {
     deferLoading?: boolean
     cacheControl?: Record<string, unknown>
+    getToolPermissionContext?: () => Promise<unknown> | unknown
+    tools?: readonly Tool[]
+    agents?: readonly unknown[]
   },
 ): Promise<ApiToolSchema> {
   const inputJsonSchema = tool.inputJSONSchema as
@@ -188,18 +188,39 @@ export async function toolToApiSchema(
     ? `${tool.name}:${jsonStringify(inputJsonSchema)}`
     : tool.name
 
+  const toolSchemaCache = getToolSchemaCache()
   let base = toolSchemaCache.get(cacheKey)
   if (!base) {
     let description = ''
     if (typeof tool.prompt === 'function') {
-      description = await (tool.prompt as () => Promise<string> | string)()
+      const promptFn = tool.prompt as (
+        promptOptions?: Record<string, unknown>,
+      ) => Promise<string> | string
+      description = await promptFn({
+        getToolPermissionContext: async () =>
+          (await options?.getToolPermissionContext?.()) ??
+          getEmptyToolPermissionContext(),
+        tools: options?.tools ?? [],
+        agents: options?.agents ?? [],
+      })
     } else if (typeof tool.description === 'string') {
       description = tool.description
     }
 
-    const inputSchema: Record<string, unknown> = inputJsonSchema ?? {
-      type: 'object',
-      properties: {},
+    let inputSchema: Record<string, unknown>
+    if (inputJsonSchema) {
+      inputSchema = inputJsonSchema
+    } else if (
+      tool.inputSchema &&
+      typeof tool.inputSchema === 'object' &&
+      '_zod' in (tool.inputSchema as Record<string, unknown>)
+    ) {
+      inputSchema = zodToJsonSchema(tool.inputSchema as ZodTypeAny)
+    } else {
+      inputSchema = {
+        type: 'object',
+        properties: {},
+      }
     }
 
     base = {

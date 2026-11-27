@@ -17,6 +17,7 @@ import {
   setCwdState,
 } from './bootstrap/state.js'
 import { getTotalCost } from './cost_tracker.js'
+import { SYNTHETIC_OUTPUT_TOOL_NAME } from './constants/tools.js'
 import { query } from './query.js'
 import type { QueryDeps } from './query/deps.js'
 import {
@@ -28,6 +29,8 @@ import {
 } from './services/api/empty_usage.js'
 import { categorizeRetryableApiError } from './services/api/errors.js'
 import type { AppState } from './state/app_state_store.js'
+import { asAnyTool } from './tool.js'
+import { createSyntheticOutputTool } from './tools/synthetic_output_tool/synthetic_output_tool.js'
 import type { Command } from './types/command.js'
 import type {
   CanUseToolFn,
@@ -77,6 +80,12 @@ import {
   shouldEnableThinkingByDefault,
   type ThinkingConfig,
 } from './utilities/thinking.js'
+import {
+  type ContentReplacementState,
+  createContentReplacementState,
+} from './utilities/tool_result_storage.js'
+
+const MAX_STRUCTURED_OUTPUT_RETRIES = 3
 
 export interface QueryEngineAgentDefinition {
   agentType?: string
@@ -145,6 +154,8 @@ export class QueryEngine {
   private readonly permissionDenials: SdkPermissionDenial[] = []
   private totalUsage: NonNullableUsage = { ...EMPTY_USAGE }
   private readFileState: FileStateCache
+  private readonly contentReplacementState: ContentReplacementState =
+    createContentReplacementState()
   private readonly discoveredSkillNames = new Set<string>()
   private readonly loadedNestedMemoryPaths = new Set<string>()
 
@@ -246,10 +257,28 @@ export class QueryEngine {
         ? { type: 'adaptive' }
         : { type: 'disabled' })
 
+    const effectiveTools: readonly Tool[] = this.config.jsonSchema
+      ? [
+          ...this.config.tools.filter(
+            t => t.name !== SYNTHETIC_OUTPUT_TOOL_NAME,
+          ),
+          asAnyTool(createSyntheticOutputTool(this.config.jsonSchema)),
+        ]
+      : this.config.tools
+
+    const effectiveAppendSystemPrompt = this.config.jsonSchema
+      ? [
+          this.config.appendSystemPrompt,
+          `You MUST return your final response by calling the \`${SYNTHETIC_OUTPUT_TOOL_NAME}\` tool with valid JSON conforming to the provided schema.`,
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      : this.config.appendSystemPrompt
+
     const appState = this.config.getAppState()
     const { defaultSystemPrompt, userContext, systemContext } =
       await fetchSystemPromptParts({
-        tools: this.config.tools,
+        tools: effectiveTools,
         mainLoopModel,
         additionalWorkingDirectories: getAdditionalDirectoriesForClaudeMd(),
         mcpClients: this.config.mcpClients,
@@ -259,7 +288,7 @@ export class QueryEngine {
     const systemPrompt = buildEffectiveSystemPrompt({
       defaultSystemPrompt,
       customSystemPrompt: this.config.customSystemPrompt,
-      appendSystemPrompt: this.config.appendSystemPrompt,
+      appendSystemPrompt: effectiveAppendSystemPrompt,
     })
 
     const userMsg = createUserMessage({
@@ -274,7 +303,7 @@ export class QueryEngine {
 
     yield buildSystemInitMessage({
       cwd: this.config.cwd,
-      tools: this.config.tools,
+      tools: effectiveTools,
       mcpClients: this.config.mcpClients,
       model: mainLoopModel,
       permissionMode: appState.toolPermissionContext.mode,
@@ -303,15 +332,16 @@ export class QueryEngine {
       getAppState: this.config.getAppState,
       setAppState: this.config.setAppState,
       readFileState: this.readFileState,
+      contentReplacementState: this.contentReplacementState,
       discoveredSkillNames: this.discoveredSkillNames,
       loadedNestedMemoryPaths: this.loadedNestedMemoryPaths,
       nestedMemoryAttachmentTriggers: new Set<string>(),
       options: {
         mainLoopModel,
-        tools: this.config.tools,
+        tools: effectiveTools,
         thinkingConfig,
         isNonInteractiveSession: true,
-        hasAppendSystemPrompt: Boolean(this.config.appendSystemPrompt),
+        hasAppendSystemPrompt: Boolean(effectiveAppendSystemPrompt),
       },
     }
 
@@ -340,181 +370,215 @@ export class QueryEngine {
       uuid: randomUUID(),
     })
 
-    for await (const event of query({
-      messages,
-      systemPrompt,
-      userContext,
-      systemContext,
-      canUseTool: wrappedCanUseTool,
-      toolUseContext,
-      fallbackModel: this.config.fallbackModel,
-      querySource: 'sdk',
-      maxTurns: this.config.maxTurns,
-      taskBudget: this.config.taskBudget,
-      deps: this.config.deps,
-    })) {
-      if (
-        event.type === 'assistant' ||
-        event.type === 'user' ||
-        (event.type === 'system' && event.subtype === 'compact_boundary')
-      ) {
-        messages.push(event)
-      }
-      if (event.type === 'user') {
-        turnCount++
-      }
+    let structuredOutputAttempts = 0
 
-      switch (event.type) {
-        case 'tombstone':
-        case 'stream_request_start':
-          break
-
-        case 'assistant': {
-          if (event.message.stop_reason != null) {
-            lastStopReason = event.message.stop_reason
-          }
-          if (!sawStreamingUsage && event.message.usage) {
-            const assistantUsage = updateUsage(
-              { ...EMPTY_USAGE },
-              event.message.usage as unknown as PartialApiUsage,
-            )
-            this.totalUsage = accumulateUsage(this.totalUsage, assistantUsage)
-          }
-          this.mutableMessages.push(event)
-          yield* normalizeMessage(event)
-          break
-        }
-
-        case 'user':
-        case 'progress': {
-          this.mutableMessages.push(event)
-          yield* normalizeMessage(event)
-          break
-        }
-
-        case 'stream_event': {
-          sawStreamingUsage = true
-          const rawEvent = event.event
-          if (rawEvent.type === 'message_start') {
-            currentMessageUsage = updateUsage(
-              { ...EMPTY_USAGE },
-              rawEvent.message.usage as unknown as PartialApiUsage,
-            )
-          } else if (rawEvent.type === 'message_delta') {
-            currentMessageUsage = updateUsage(
-              currentMessageUsage,
-              rawEvent.usage as unknown as PartialApiUsage,
-            )
-            if (rawEvent.delta.stop_reason != null) {
-              lastStopReason = rawEvent.delta.stop_reason
-            }
-          } else if (rawEvent.type === 'message_stop') {
-            this.totalUsage = accumulateUsage(
-              this.totalUsage,
-              currentMessageUsage,
-            )
-          }
-          if (this.config.includePartialMessages) {
-            yield {
-              type: 'stream_event',
-              event: rawEvent,
-              parent_tool_use_id: null,
-              uuid: randomUUID(),
-              session_id: sessionId,
-            }
-          }
-          break
-        }
-
-        case 'attachment': {
-          this.mutableMessages.push(event)
+    while (true) {
+      for await (const event of query({
+        messages,
+        systemPrompt,
+        userContext,
+        systemContext,
+        canUseTool: wrappedCanUseTool,
+        toolUseContext,
+        fallbackModel: this.config.fallbackModel,
+        querySource: 'sdk',
+        maxTurns: this.config.maxTurns,
+        taskBudget: this.config.taskBudget,
+        deps: this.config.deps,
+      })) {
+        if (
+          event.type === 'assistant' ||
+          event.type === 'user' ||
+          (event.type === 'system' && event.subtype === 'compact_boundary')
+        ) {
           messages.push(event)
-          if (event.attachment.type === 'structured_output') {
-            structuredOutputFromTool = event.attachment.data
-          } else if (event.attachment.type === 'max_turns_reached') {
-            const maxTurns = Number(
-              event.attachment.maxTurns ?? this.config.maxTurns ?? 0,
-            )
-            const reachedTurns = Number(
-              event.attachment.turnCount ?? turnCount,
-            )
-            const resultMsg: SdkResultMessage = {
-              ...buildCommonResult(reachedTurns),
-              subtype: 'error_max_turns',
-              is_error: true,
-              errors: [`Reached maximum number of turns (${maxTurns})`],
-            }
-            yield resultMsg
-            return
-          }
-          break
+        }
+        if (event.type === 'user') {
+          turnCount++
         }
 
-        case 'system': {
-          this.mutableMessages.push(event)
-          if (event.subtype === 'compact_boundary' && event.compactMetadata) {
-            const boundaryIdx = this.mutableMessages.lastIndexOf(event)
-            if (boundaryIdx > 0) {
-              this.mutableMessages.splice(0, boundaryIdx)
+        switch (event.type) {
+          case 'tombstone':
+          case 'stream_request_start':
+            break
+
+          case 'assistant': {
+            if (event.message.stop_reason != null) {
+              lastStopReason = event.message.stop_reason
             }
-            const msgBoundaryIdx = messages.lastIndexOf(event)
-            if (msgBoundaryIdx > 0) {
-              messages.splice(0, msgBoundaryIdx)
+            if (!sawStreamingUsage && event.message.usage) {
+              const assistantUsage = updateUsage(
+                { ...EMPTY_USAGE },
+                event.message.usage as unknown as PartialApiUsage,
+              )
+              this.totalUsage = accumulateUsage(
+                this.totalUsage,
+                assistantUsage,
+              )
             }
+            this.mutableMessages.push(event)
+            yield* normalizeMessage(event)
+            break
+          }
+
+          case 'user':
+          case 'progress': {
+            this.mutableMessages.push(event)
+            yield* normalizeMessage(event)
+            break
+          }
+
+          case 'stream_event': {
+            sawStreamingUsage = true
+            const rawEvent = event.event
+            if (rawEvent.type === 'message_start') {
+              currentMessageUsage = updateUsage(
+                { ...EMPTY_USAGE },
+                rawEvent.message.usage as unknown as PartialApiUsage,
+              )
+            } else if (rawEvent.type === 'message_delta') {
+              currentMessageUsage = updateUsage(
+                currentMessageUsage,
+                rawEvent.usage as unknown as PartialApiUsage,
+              )
+              if (rawEvent.delta.stop_reason != null) {
+                lastStopReason = rawEvent.delta.stop_reason
+              }
+            } else if (rawEvent.type === 'message_stop') {
+              this.totalUsage = accumulateUsage(
+                this.totalUsage,
+                currentMessageUsage,
+              )
+            }
+            if (this.config.includePartialMessages) {
+              yield {
+                type: 'stream_event',
+                event: rawEvent,
+                parent_tool_use_id: null,
+                uuid: randomUUID(),
+                session_id: sessionId,
+              }
+            }
+            break
+          }
+
+          case 'attachment': {
+            this.mutableMessages.push(event)
+            messages.push(event)
+            if (event.attachment.type === 'structured_output') {
+              structuredOutputFromTool = event.attachment.data
+            } else if (event.attachment.type === 'max_turns_reached') {
+              const maxTurns = Number(
+                event.attachment.maxTurns ?? this.config.maxTurns ?? 0,
+              )
+              const reachedTurns = Number(
+                event.attachment.turnCount ?? turnCount,
+              )
+              const resultMsg: SdkResultMessage = {
+                ...buildCommonResult(reachedTurns),
+                subtype: 'error_max_turns',
+                is_error: true,
+                errors: [`Reached maximum number of turns (${maxTurns})`],
+              }
+              yield resultMsg
+              return
+            }
+            break
+          }
+
+          case 'system': {
+            this.mutableMessages.push(event)
+            if (event.subtype === 'compact_boundary' && event.compactMetadata) {
+              const boundaryIdx = this.mutableMessages.lastIndexOf(event)
+              if (boundaryIdx > 0) {
+                this.mutableMessages.splice(0, boundaryIdx)
+              }
+              const msgBoundaryIdx = messages.lastIndexOf(event)
+              if (msgBoundaryIdx > 0) {
+                messages.splice(0, msgBoundaryIdx)
+              }
+              yield {
+                type: 'system',
+                subtype: 'compact_boundary',
+                compact_metadata: toSdkCompactMetadata(event.compactMetadata),
+                uuid: event.uuid,
+                session_id: sessionId,
+              }
+            } else if (event.subtype === 'api_error') {
+              yield {
+                type: 'system',
+                subtype: 'api_retry',
+                attempt: event.retryAttempt,
+                max_retries: event.maxRetries,
+                retry_delay_ms: event.retryInMs,
+                error_status: event.error.status ?? null,
+                error: categorizeRetryableApiError(event.error),
+                uuid: event.uuid,
+                session_id: sessionId,
+              }
+            }
+            break
+          }
+
+          case 'tool_use_summary': {
             yield {
-              type: 'system',
-              subtype: 'compact_boundary',
-              compact_metadata: toSdkCompactMetadata(event.compactMetadata),
+              type: 'tool_use_summary',
+              summary: event.summary,
+              preceding_tool_use_ids: event.precedingToolUseIds,
               uuid: event.uuid,
               session_id: sessionId,
             }
-          } else if (event.subtype === 'api_error') {
-            yield {
-              type: 'system',
-              subtype: 'api_retry',
-              attempt: event.retryAttempt,
-              max_retries: event.maxRetries,
-              retry_delay_ms: event.retryInMs,
-              error_status: event.error.status ?? null,
-              error: categorizeRetryableApiError(event.error),
-              uuid: event.uuid,
-              session_id: sessionId,
-            }
+            break
           }
-          break
+
+          default:
+            break
         }
 
-        case 'tool_use_summary': {
-          yield {
-            type: 'tool_use_summary',
-            summary: event.summary,
-            preceding_tool_use_ids: event.precedingToolUseIds,
-            uuid: event.uuid,
-            session_id: sessionId,
+        // Enforce USD budget ceiling after each yielded event
+        if (
+          this.config.maxBudgetUsd !== undefined &&
+          getTotalCost() >= this.config.maxBudgetUsd
+        ) {
+          const budgetResult: SdkResultMessage = {
+            ...buildCommonResult(turnCount),
+            subtype: 'error_max_budget_usd',
+            is_error: true,
+            errors: [`Reached maximum budget ($${this.config.maxBudgetUsd})`],
           }
-          break
+          yield budgetResult
+          return
         }
-
-        default:
-          break
       }
 
-      // Enforce USD budget ceiling after each yielded event
       if (
-        this.config.maxBudgetUsd !== undefined &&
-        getTotalCost() >= this.config.maxBudgetUsd
+        !this.config.jsonSchema ||
+        structuredOutputFromTool !== undefined ||
+        this.abortController.signal.aborted
       ) {
-        const budgetResult: SdkResultMessage = {
+        break
+      }
+
+      structuredOutputAttempts++
+      if (structuredOutputAttempts > MAX_STRUCTURED_OUTPUT_RETRIES) {
+        const failedResult: SdkResultMessage = {
           ...buildCommonResult(turnCount),
-          subtype: 'error_max_budget_usd',
+          subtype: 'error_max_structured_output_retries',
           is_error: true,
           errors: [
-            `Reached maximum budget ($${this.config.maxBudgetUsd})`,
+            `Failed to provide valid structured output after ${MAX_STRUCTURED_OUTPUT_RETRIES} retries`,
           ],
         }
-        yield budgetResult
+        yield failedResult
         return
       }
+
+      const retryPrompt = createUserMessage({
+        content: `You must call the \`${SYNTHETIC_OUTPUT_TOOL_NAME}\` tool with valid JSON matching the required schema.`,
+        isMeta: true,
+      })
+      this.mutableMessages.push(retryPrompt)
+      messages.push(retryPrompt)
     }
 
     // Assemble final result

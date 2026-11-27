@@ -1,0 +1,16 @@
+/**
+ * Constants and error codes for `FileEditTool` (`Edit`).
+ */
+
+export const FILE_EDIT_ERROR_CODES = {
+  NO_OP: 1,
+  NOTEBOOK_REDIRECT: 2,
+  FILE_NOT_FOUND: 3,
+  FILE_NOT_READ: 4,
+  PARTIAL_READ: 5,
+  FILE_MODIFIED_EXTERNALLY: 6,
+  STRING_NOT_FOUND: 7,
+  MULTIPLE_MATCHES: 8,
+  FILE_EXISTS_FOR_CREATE: 9,
+  INVALID_SETTINGS_JSON: 10,
+} as const

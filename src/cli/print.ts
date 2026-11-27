@@ -8,6 +8,10 @@ import {
   setMainLoopModelOverride,
   setSdkBetas,
 } from '../bootstrap/state.js'
+import {
+  SYNTHETIC_OUTPUT_TOOL_NAME,
+  TOOL_SEARCH_TOOL_NAME,
+} from '../constants/tools.js'
 import { formatTotalCost, saveCurrentSessionCosts } from '../cost_tracker.js'
 import { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
@@ -17,14 +21,17 @@ import {
 } from '../state/app_state_store.js'
 import { onChangeAppState } from '../state/on_change_app_state.js'
 import { createStore } from '../state/store.js'
+import type { AnyTool, ToolUseContext } from '../tool.js'
+import { assembleToolPool } from '../tools.js'
 import type { CanUseToolFn } from '../types/forward.js'
-import type { PermissionMode } from '../types/permissions.js'
+import type { PermissionMode, ToolPermissionContext } from '../types/permissions.js'
 import { hasConsoleBillingAccess } from '../utilities/billing.js'
 import { getCwd } from '../utilities/cwd.js'
 import { parseEffortValue } from '../utilities/effort.js'
 import { gracefulShutdownSync } from '../utilities/graceful_shutdown.js'
 import { logHeadlessProfilerTurn } from '../utilities/headless_profiler.js'
 import type { SdkMessage, SdkResultMessage } from '../utilities/messages/mappers.js'
+import { cloneRulesBySource } from '../utilities/permissions/rule_matching.js'
 import { writeToStdout } from '../utilities/process.js'
 import { jsonStringify } from '../utilities/slow_operations.js'
 import type { ThinkingConfig } from '../utilities/thinking.js'
@@ -49,11 +56,35 @@ export interface HeadlessRunOptions {
   dangerouslySkipPermissions?: boolean
   includePartialMessages?: boolean
   replayUserMessages?: boolean
+  jsonSchema?: string | Record<string, unknown>
+  tools?: string[]
+  allowedTools?: string[]
+  disallowedTools?: string[]
   /** Injectable test overrides */
   deps?: QueryDeps
   stdoutWriter?: (text: string) => void
   stderrWriter?: (text: string) => void
   skipExit?: boolean
+}
+
+function splitToolListArg(values: readonly string[] | undefined): string[] | undefined {
+  if (values === undefined) return undefined
+  return values
+    .flatMap(entry => entry.split(','))
+    .map(token => token.trim())
+    .filter(Boolean)
+}
+
+function parseJsonSchemaOption(
+  raw: string | Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!raw) return undefined
+  if (typeof raw === 'object') return raw
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('--json-schema must be a JSON object schema.')
+  }
+  return parsed as Record<string, unknown>
 }
 
 function resolveThinkingConfig(
@@ -118,26 +149,92 @@ export async function runHeadless(
     ? parseEffortValue(options.effort)
     : initialState.effortValue
 
+  const allowedCliRules = splitToolListArg(options.allowedTools)
+  const disallowedCliRules = splitToolListArg(options.disallowedTools)
+  const requestedTools = splitToolListArg(options.tools)
+  const parsedJsonSchema = parseJsonSchemaOption(options.jsonSchema)
+
+  const initialPermCtx: ToolPermissionContext = {
+    ...initialState.toolPermissionContext,
+    mode: permissionMode,
+    additionalWorkingDirectories: new Map(
+      initialState.toolPermissionContext.additionalWorkingDirectories,
+    ),
+    alwaysAllowRules: {
+      ...cloneRulesBySource(initialState.toolPermissionContext.alwaysAllowRules),
+      ...(allowedCliRules?.length ? { cliArg: allowedCliRules } : {}),
+    },
+    alwaysDenyRules: {
+      ...cloneRulesBySource(initialState.toolPermissionContext.alwaysDenyRules),
+      ...(disallowedCliRules?.length ? { cliArg: disallowedCliRules } : {}),
+    },
+    alwaysAskRules: cloneRulesBySource(
+      initialState.toolPermissionContext.alwaysAskRules,
+    ),
+    ...(initialState.toolPermissionContext.strippedDangerousRules
+      ? {
+          strippedDangerousRules: cloneRulesBySource(
+            initialState.toolPermissionContext.strippedDangerousRules,
+          ),
+        }
+      : { strippedDangerousRules: undefined }),
+  }
+
   const store = createStore<AppState>(
     {
       ...initialState,
       verbose: Boolean(options.verbose),
       effortValue,
-      toolPermissionContext: {
-        ...initialState.toolPermissionContext,
-        mode: permissionMode,
-      },
+      toolPermissionContext: initialPermCtx,
     },
     onChangeAppState,
   )
 
-  const canUseTool: CanUseToolFn = async (_tool, input) => {
+  const assembledTools = assembleToolPool(store.getState().toolPermissionContext, [], {
+    ...(requestedTools !== undefined ? { allowedToolNames: requestedTools } : {}),
+  })
+
+  const canUseTool: CanUseToolFn = async (
+    tool,
+    input,
+    toolUseContext,
+  ) => {
+    const typedTool = tool as AnyTool | undefined
+    if (
+      typedTool?.name === SYNTHETIC_OUTPUT_TOOL_NAME ||
+      typedTool?.name === TOOL_SEARCH_TOOL_NAME
+    ) {
+      return { behavior: 'allow', updatedInput: input }
+    }
+
+    if (typedTool && typeof typedTool.checkPermissions === 'function') {
+      const decision = await typedTool.checkPermissions(
+        input,
+        toolUseContext as ToolUseContext,
+      )
+      if (decision.behavior === 'allow' || decision.behavior === 'deny') {
+        return decision
+      }
+      if (permissionMode === 'bypassPermissions') {
+        return { behavior: 'allow', updatedInput: input }
+      }
+      return {
+        behavior: 'deny',
+        message:
+          'message' in decision && decision.message
+            ? `${decision.message} (Non-interactive mode cannot prompt for approval; pass --allowed-tools or --dangerously-skip-permissions.)`
+            : `Tool ${typedTool.name} requires interactive approval.`,
+        decisionReason:
+          decision.decisionReason ?? { type: 'mode', mode: permissionMode },
+      }
+    }
+
     if (permissionMode === 'bypassPermissions') {
       return { behavior: 'allow', updatedInput: input }
     }
     return {
       behavior: 'deny',
-      message: 'Tool execution is not enabled in Phase 2 headless chat mode.',
+      message: 'Tool execution requires permission in non-interactive mode.',
       decisionReason: { type: 'mode', mode: permissionMode },
     }
   }
@@ -147,7 +244,7 @@ export async function runHeadless(
 
   const engine = new QueryEngine({
     cwd: getCwd(),
-    tools: [],
+    tools: assembledTools,
     commands: [],
     mcpClients: [],
     canUseTool,
@@ -164,6 +261,7 @@ export async function runHeadless(
       options.taskBudget !== undefined
         ? { total: options.taskBudget }
         : undefined,
+    jsonSchema: parsedJsonSchema,
     verbose: options.verbose,
     replayUserMessages: options.replayUserMessages,
     includePartialMessages:

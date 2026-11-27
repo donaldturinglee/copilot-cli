@@ -36,7 +36,9 @@ import {
 import { createDumpPromptsFetch } from './services/api/dump_prompts.js'
 import { PROMPT_TOO_LONG_ERROR_MESSAGE } from './services/api/errors.js'
 import { FallbackTriggeredError } from './services/api/with_retry.js'
+import { StreamingToolExecutor } from './services/tools/streaming_tool_executor.js'
 import type { AppState } from './state/app_state_store.js'
+import type { AnyTool, ToolUseContext as FullToolUseContext } from './tool.js'
 import type {
   CanUseToolFn,
   CompactionResult,
@@ -62,6 +64,7 @@ import {
   ESCALATED_MAX_TOKENS,
 } from './utilities/context.js'
 import { logForDebugging } from './utilities/debug.js'
+import { isEnvTruthy } from './utilities/env_utils.js'
 import { isFeatureEnabled } from './utilities/feature_flags.js'
 import { headlessProfilerCheckpoint } from './utilities/headless_profiler.js'
 import { logError } from './utilities/log.js'
@@ -92,6 +95,10 @@ import {
   finalContextTokensFromLastResponse,
   tokenCountWithEstimation,
 } from './utilities/tokens.js'
+import {
+  applyToolResultBudget,
+  provisionContentReplacementState,
+} from './utilities/tool_result_storage.js'
 
 export const MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
 
@@ -327,10 +334,36 @@ async function* queryLoop(
 
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
 
+    // Enforce aggregate per-message tool-result budget with frozen ContentReplacementState
+    const contentReplacementState = provisionContentReplacementState(
+      toolUseContext as FullToolUseContext,
+    )
+    const ctxOptionsForBudget = getContextOptions(toolUseContext)
+    const budgeted = await applyToolResultBudget(
+      messagesForQuery,
+      contentReplacementState,
+      ctxOptionsForBudget.tools as readonly AnyTool[] | undefined,
+    )
+    messagesForQuery = budgeted.messages
+    toolUseContext = { ...toolUseContext, messages: messagesForQuery }
+
     const assistantMessages: AssistantMessage[] = []
     const toolResults: Array<UserMessage | AttachmentMessage> = []
     const toolUseBlocks: BetaToolUseBlock[] = []
     let needsFollowUp = false
+    let shouldPreventContinuation = false
+    let updatedToolUseContext = toolUseContext
+
+    // Use StreamingToolExecutor mid-stream unless caller injected a custom runTools mock
+    const useStreamingExecutor =
+      !params.deps?.runTools &&
+      !isEnvTruthy(process.env.COPILOT_CLI_DISABLE_STREAMING_TOOL_EXECUTION)
+    let streamingExecutor: StreamingToolExecutor | null = useStreamingExecutor
+      ? new StreamingToolExecutor(
+          params.canUseTool,
+          toolUseContext as FullToolUseContext,
+        )
+      : null
 
     queryCheckpoint('query_setup_start')
     const ctxOptions = getContextOptions(toolUseContext)
@@ -426,6 +459,13 @@ async function* queryLoop(
           })) {
             if (streamingFallbackOccurred) {
               streamingFallbackOccurred = false
+              streamingExecutor?.discard()
+              streamingExecutor = useStreamingExecutor
+                ? new StreamingToolExecutor(
+                    params.canUseTool,
+                    toolUseContext as FullToolUseContext,
+                  )
+                : null
               for (const orphaned of assistantMessages) {
                 yield { type: 'tombstone', message: orphaned }
               }
@@ -453,6 +493,34 @@ async function* queryLoop(
               if (msgToolUses.length > 0) {
                 toolUseBlocks.push(...msgToolUses)
                 needsFollowUp = true
+                if (streamingExecutor) {
+                  for (const block of msgToolUses) {
+                    streamingExecutor.addTool(block, message)
+                  }
+                  for (const update of streamingExecutor.getCompletedResults()) {
+                    if (update.message) {
+                      yield update.message
+                      if (
+                        update.message.type === 'attachment' &&
+                        update.message.attachment.type ===
+                          'hook_stopped_continuation'
+                      ) {
+                        shouldPreventContinuation = true
+                      }
+                      const normalized = normalizeMessagesForApi(
+                        [update.message],
+                        ctxOptions.tools,
+                      ).filter((m): m is UserMessage => m.type === 'user')
+                      toolResults.push(...normalized)
+                    }
+                    if (update.newContext) {
+                      updatedToolUseContext = {
+                        ...update.newContext,
+                        queryTracking,
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -464,6 +532,13 @@ async function* queryLoop(
           ) {
             currentModel = params.fallbackModel
             attemptWithFallback = true
+            streamingExecutor?.discard()
+            streamingExecutor = useStreamingExecutor
+              ? new StreamingToolExecutor(
+                  params.canUseTool,
+                  toolUseContext as FullToolUseContext,
+                )
+              : null
 
             yield* yieldMissingToolResultBlocks(
               assistantMessages,
@@ -517,6 +592,7 @@ async function* queryLoop(
 
     // Streaming abort check
     if (toolUseContext.abortController.signal.aborted) {
+      streamingExecutor?.discard()
       yield* yieldMissingToolResultBlocks(
         assistantMessages,
         'Interrupted by user',
@@ -709,11 +785,33 @@ async function* queryLoop(
     }
 
     // Tool execution slot
-    let shouldPreventContinuation = false
-    let updatedToolUseContext = toolUseContext
     queryCheckpoint('query_tool_execution_start')
 
-    if (deps.runTools) {
+    if (streamingExecutor) {
+      for await (const update of streamingExecutor.getRemainingResults()) {
+        if (update.message) {
+          yield update.message
+          if (
+            update.message.type === 'attachment' &&
+            update.message.attachment.type === 'hook_stopped_continuation'
+          ) {
+            shouldPreventContinuation = true
+          }
+          const normalized = normalizeMessagesForApi(
+            [update.message],
+            ctxOptions.tools,
+          ).filter((m): m is UserMessage => m.type === 'user')
+          toolResults.push(...normalized)
+        }
+        if (update.newContext) {
+          updatedToolUseContext = { ...update.newContext, queryTracking }
+        }
+      }
+      updatedToolUseContext = {
+        ...streamingExecutor.getUpdatedContext(),
+        queryTracking,
+      }
+    } else if (deps.runTools) {
       for await (const update of deps.runTools(
         toolUseBlocks,
         assistantMessages,
@@ -737,23 +835,6 @@ async function* queryLoop(
         if (update.newContext) {
           updatedToolUseContext = { ...update.newContext, queryTracking }
         }
-      }
-    } else {
-      // Phase 2 default before Phase 3 tool executor lands: keep conversation API-valid
-      for (const toolUse of toolUseBlocks) {
-        const missingMsg = createUserMessage({
-          content: [
-            {
-              type: 'tool_result',
-              tool_use_id: toolUse.id,
-              content: `Error: No such tool available: ${toolUse.name}`,
-              is_error: true,
-            },
-          ],
-          toolUseResult: `Error: No such tool available: ${toolUse.name}`,
-        })
-        yield missingMsg
-        toolResults.push(missingMsg)
       }
     }
 

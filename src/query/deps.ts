@@ -7,6 +7,7 @@
 import type { BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import type { QuerySource } from '../constants/query_source.js'
 import { queryModelWithStreaming } from '../services/api/claude.js'
+import { runTools } from '../services/tools/tool_orchestration.js'
 import type {
   CanUseToolFn,
   CompactionResult,
@@ -110,5 +111,6 @@ export function productionDeps(): QueryDeps {
     microcompact: async messages => ({ messages }),
     autocompact: async () => ({ wasCompacted: false }),
     uuid: () => randomUUID(),
+    runTools,
   }
 }

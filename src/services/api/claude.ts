@@ -145,6 +145,10 @@ import {
   modelSupportsThinking,
   type ThinkingConfig,
 } from '../../utilities/thinking.js'
+import {
+  extractDiscoveredToolNames,
+  isToolSearchEnabled,
+} from '../../utilities/tool_search.js'
 import { getFeatureValueCachedMayBeStale } from '../analytics/growthbook.js'
 import {
   logEvent,
@@ -223,6 +227,8 @@ export interface QueryModelOptions {
   agentId?: string
   taskBudget?: { total: number; remaining?: number }
   maxRetries?: number
+  /** Server-side extra tool schemas (e.g. `web_search_20250305`). */
+  extraToolSchemas?: ReadonlyArray<Record<string, unknown>>
   /** Test-only client factory override to mock SSE/non-streaming transports. */
   clientFactoryOverride?: () => Promise<Anthropic>
 }
@@ -874,10 +880,28 @@ async function* queryModelInner({
   void setCacheEditingHeaderLatched
   void getCacheEditingHeaderLatched
 
+  const toolSearchActive = isToolSearchEnabled(options.model, tools)
+  const discoveredToolNames = toolSearchActive
+    ? extractDiscoveredToolNames(messages)
+    : null
+
   const toolSchemas = await Promise.all(
-    tools.map(tool => toolToApiSchema(tool)),
+    tools.map(tool => {
+      const deferLoading =
+        toolSearchActive &&
+        tool.shouldDefer === true &&
+        tool.alwaysLoad !== true &&
+        !discoveredToolNames?.has(tool.name)
+      return toolToApiSchema(tool, {
+        deferLoading,
+        getToolPermissionContext: options.getToolPermissionContext,
+        tools,
+      })
+    }),
   )
-  const extraToolSchemas: Array<Record<string, unknown>> = []
+  const extraToolSchemas: Array<Record<string, unknown>> = [
+    ...(options.extraToolSchemas ?? []),
+  ]
   if (options.advisorModel) {
     extraToolSchemas.push({
       type: 'advisor_20260301',
@@ -889,11 +913,14 @@ async function* queryModelInner({
 
   // Message normalization pipeline (strict order)
   let messagesForApi = normalizeMessagesForApi(messages, tools)
-  messagesForApi = messagesForApi.map(msg =>
-    msg.type === 'user'
-      ? stripToolReferenceBlocksFromUserMessage(msg)
-      : stripCallerFieldFromAssistantMessage(msg),
-  )
+  messagesForApi = messagesForApi.map(msg => {
+    if (msg.type === 'user') {
+      return toolSearchActive
+        ? msg
+        : stripToolReferenceBlocksFromUserMessage(msg)
+    }
+    return stripCallerFieldFromAssistantMessage(msg)
+  })
   messagesForApi = ensureToolResultPairing(messagesForApi)
   if (!baseBetas.includes(ADVISOR_BETA_HEADER)) {
     messagesForApi = stripAdvisorBlocks(messagesForApi)

@@ -7,6 +7,12 @@ import { getSessionId } from '../bootstrap/state.js'
 import type { Message } from '../types/message.js'
 import { randomUUID } from './crypto.js'
 import { isEnvTruthy } from './env_utils.js'
+import {
+  cloneFileStateCache,
+  createFileStateCache,
+  type FileState,
+  FileStateCache,
+} from './file_state_cache.js'
 import { isNotEmptyMessage, normalizeMessages } from './messages.js'
 import type { SdkMessage } from './messages/mappers.js'
 
@@ -15,29 +21,8 @@ const MAX_TOOL_PROGRESS_TRACKING_ENTRIES = 100
 
 const lastToolProgressEmittedAt = new Map<string, number>()
 
-export interface FileStateCacheEntry {
-  content: string
-  timestamp: number
-  offset?: number
-  limit?: number
-  isPartialView?: boolean
-}
-
-export type FileStateCache = Map<string, FileStateCacheEntry>
-
-/**
- * Creates a fresh `FileStateCache` map.
- */
-export function createFileStateCache(): FileStateCache {
-  return new Map<string, FileStateCacheEntry>()
-}
-
-/**
- * Shallow-clones a `FileStateCache` map.
- */
-export function cloneFileStateCache(cache: FileStateCache): FileStateCache {
-  return new Map(cache)
-}
+export type FileStateCacheEntry = FileState
+export { cloneFileStateCache, createFileStateCache, FileStateCache }
 
 /**
  * Determines whether the final message of a turn represents a valid completed
