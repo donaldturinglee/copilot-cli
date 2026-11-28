@@ -1,9 +1,18 @@
 import chalk from 'chalk'
 import { setCwdState, switchSession } from './bootstrap/state.js'
+import { getAutoMemEntrypoint } from './memdir/paths.js'
+import { getTeamMemEntrypoint } from './memdir/team_mem_paths.js'
 import { logEvent } from './services/analytics/index.js'
+import { initAutoDream } from './services/auto_dream/auto_dream.js'
+import { initExtractMemories } from './services/extract_memories/extract_memories.js'
+import { initSessionMemory } from './services/session_memory/session_memory.js'
 import { asSessionId } from './types/ids.js'
 import type { PermissionMode } from './types/permissions.js'
-import { getCurrentProjectConfig } from './utilities/config.js'
+import { registerClaudeMdMemoryProviders } from './utilities/claudemd.js'
+import {
+  getCurrentProjectConfig,
+  registerMemoryPathProviders,
+} from './utilities/config.js'
 import { logForDiagnosticsNoPii } from './utilities/diag_logs.js'
 import { isBareMode, isEnvTruthy } from './utilities/env_utils.js'
 import { ensurePhase4HooksBootstrapped } from './utilities/hooks/bootstrap_hooks.js'
@@ -88,18 +97,31 @@ export async function setup(
   }
 
   setCwdState(cwd)
+  registerClaudeMdMemoryProviders({
+    getAutoMemEntrypoint,
+    getTeamMemEntrypoint,
+  })
+  registerMemoryPathProviders({
+    getAutoMemEntrypoint,
+    getTeamMemEntrypoint,
+  })
   ensurePhase4HooksBootstrapped()
   captureHooksConfigSnapshot()
 
-  if (!isBareMode() && setupHooks.onSetupNonBare) {
-    await setupHooks.onSetupNonBare({
-      cwd,
-      worktreeEnabled,
-      worktreeName,
-      tmuxEnabled,
-      worktreePrNumber,
-      messagingSocketPath,
-    })
+  if (!isBareMode()) {
+    initSessionMemory()
+    initExtractMemories()
+    initAutoDream()
+    if (setupHooks.onSetupNonBare) {
+      await setupHooks.onSetupNonBare({
+        cwd,
+        worktreeEnabled,
+        worktreeName,
+        tmuxEnabled,
+        worktreePrNumber,
+        messagingSocketPath,
+      })
+    }
   }
 
   setupHooks.initSinks?.()

@@ -7,13 +7,18 @@
  */
 
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
+import type { UUID } from 'crypto'
 import { dirname } from 'path'
 import { z } from 'zod/v4'
 import { addToTotalLinesChanged } from '../../bootstrap/state.js'
 import { DEFAULT_MAX_RESULT_SIZE_CHARS } from '../../constants/tool_limits.js'
 import { FILE_WRITE_TOOL_NAME } from '../../constants/tools.js'
+import { isTeamMemPath } from '../../memdir/team_mem_paths.js'
+import { checkTeamMemSecrets } from '../../services/team_memory_sync/team_mem_secret_guard.js'
+import { notifyTeamMemoryWrite } from '../../services/team_memory_sync/watcher.js'
 import { buildTool, type ToolUseContext } from '../../tool.js'
 import { getEmptyToolPermissionContext } from '../../types/permissions.js'
+import { randomUUID } from '../../utilities/crypto.js'
 import {
   countLinesChanged,
   getPatchFromContents,
@@ -26,6 +31,7 @@ import {
   getFileModificationTime,
   writeTextContent,
 } from '../../utilities/file.js'
+import { fileHistoryTrackEdit } from '../../utilities/file_history.js'
 import { logFileOperation } from '../../utilities/file_operation_analytics.js'
 import { getFsImplementation } from '../../utilities/fs_operations.js'
 import { expandPath } from '../../utilities/path.js'
@@ -115,6 +121,14 @@ export const FileWriteTool = buildTool<FileWriteInput, FileWriteOutput>({
     }
 
     const fullPath = expandPath(input.file_path)
+    const secretError = checkTeamMemSecrets(fullPath, input.content)
+    if (secretError) {
+      return {
+        result: false,
+        message: secretError,
+        errorCode: 2,
+      }
+    }
     const settingsCheck = validateInputForSettingsFileEdit(
       fullPath,
       input.content,
@@ -185,7 +199,7 @@ export const FileWriteTool = buildTool<FileWriteInput, FileWriteOutput>({
     return { result: true }
   },
 
-  async call(input, context: ToolUseContext) {
+  async call(input, context: ToolUseContext, _canUseTool, parentMessage) {
     const fullPath = expandPath(input.file_path)
     const fsImpl = getFsImplementation()
     const exists = fsImpl.existsSync(fullPath)
@@ -198,8 +212,27 @@ export const FileWriteTool = buildTool<FileWriteInput, FileWriteOutput>({
       ? normalizeCrLf(fsImpl.readFileSync(fullPath, { encoding }))
       : null
 
+    if (context.updateFileHistoryState) {
+      const parentUuid =
+        parentMessage &&
+        typeof parentMessage === 'object' &&
+        'uuid' in parentMessage &&
+        typeof (parentMessage as { uuid?: unknown }).uuid === 'string'
+          ? (parentMessage as { uuid: string }).uuid
+          : undefined
+      await fileHistoryTrackEdit(
+        context.updateFileHistoryState,
+        fullPath,
+        (parentUuid ?? randomUUID()) as UUID,
+      )
+    }
+
     fsImpl.mkdirSync(dirname(fullPath))
     writeTextContent(fullPath, input.content, encoding, endings)
+
+    if (isTeamMemPath(fullPath)) {
+      notifyTeamMemoryWrite()
+    }
 
     const newMtime = getFileModificationTime(fullPath)
     const normalizedContent = normalizeCrLf(input.content)

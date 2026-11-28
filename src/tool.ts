@@ -14,7 +14,8 @@ import type {
   Notification,
   ToolUseContext as ForwardToolUseContext,
 } from './types/forward.js'
-import type { Message, ProgressMessage } from './types/message.js'
+import type { FileHistoryState } from './utilities/file_history.js'
+import type { Message, ProgressMessage, SystemMessage } from './types/message.js'
 import type {
   PermissionDecision,
   PermissionMode,
@@ -137,6 +138,10 @@ export type ToolUseContext = ForwardToolUseContext & {
   setResponseLength?: (updater: (prev: number) => number) => void
   toolDecisions?: Map<string, PermissionDecision>
   permissionMode?: PermissionMode
+  updateFileHistoryState?: (
+    updater: (prev: FileHistoryState) => FileHistoryState,
+  ) => void
+  appendSystemMessage?: (message: SystemMessage) => void
 }
 
 export type InterruptBehavior = 'cancel' | 'block'

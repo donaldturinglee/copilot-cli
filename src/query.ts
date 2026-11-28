@@ -36,6 +36,7 @@ import {
 import { createDumpPromptsFetch } from './services/api/dump_prompts.js'
 import { PROMPT_TOO_LONG_ERROR_MESSAGE } from './services/api/errors.js'
 import { FallbackTriggeredError } from './services/api/with_retry.js'
+import { calculateTokenWarningState } from './services/compact/auto_compact.js'
 import { StreamingToolExecutor } from './services/tools/streaming_tool_executor.js'
 import type { AppState } from './state/app_state_store.js'
 import type { AnyTool, ToolUseContext as FullToolUseContext } from './tool.js'
@@ -59,14 +60,12 @@ import type { PermissionMode } from './types/permissions.js'
 import { appendSystemContext, prependUserContext } from './utilities/api.js'
 import { createAttachmentMessage } from './utilities/attachments.js'
 import { saveCacheSafeParams } from './utilities/cache_safe_params.js'
-import {
-  calculateTokenWarningState,
-  ESCALATED_MAX_TOKENS,
-} from './utilities/context.js'
+import { ESCALATED_MAX_TOKENS } from './utilities/context.js'
 import { logForDebugging } from './utilities/debug.js'
-import { isEnvTruthy } from './utilities/env_utils.js'
+import { isBareMode, isEnvTruthy } from './utilities/env_utils.js'
 import { isFeatureEnabled } from './utilities/feature_flags.js'
 import { headlessProfilerCheckpoint } from './utilities/headless_profiler.js'
+import { runPostSamplingHooks } from './utilities/hooks/post_sampling_hooks.js'
 import { logError } from './utilities/log.js'
 import {
   createAssistantApiErrorMessage,
@@ -95,6 +94,7 @@ import {
   finalContextTokensFromLastResponse,
   tokenCountWithEstimation,
 } from './utilities/tokens.js'
+import { recordContentReplacement } from './utilities/session_storage.js'
 import {
   applyToolResultBudget,
   provisionContentReplacementState,
@@ -265,7 +265,34 @@ async function* queryLoop(
     let tracking = autoCompactTracking
     const snipTokensFreed = 0
 
-    // Pre-API compaction slot C: microcompact
+    // Tier 0: Enforce aggregate per-message tool-result budget with frozen ContentReplacementState
+    const contentReplacementState = provisionContentReplacementState(
+      toolUseContext as FullToolUseContext,
+    )
+    const ctxOptionsForBudget = getContextOptions(toolUseContext)
+    const budgeted = await applyToolResultBudget(
+      messagesForQuery,
+      contentReplacementState,
+      ctxOptionsForBudget.tools as readonly AnyTool[] | undefined,
+    )
+    messagesForQuery = budgeted.messages
+    if (
+      budgeted.replacedIds.length > 0 &&
+      (params.querySource === 'repl_main_thread' ||
+        params.querySource === 'sdk' ||
+        params.querySource.startsWith('agent:'))
+    ) {
+      const replacedSet = new Set(budgeted.replacedIds)
+      const newRecords = contentReplacementState.records.filter(r =>
+        replacedSet.has(r.toolUseId),
+      )
+      if (newRecords.length > 0) {
+        void recordContentReplacement(newRecords).catch(err => logError(err))
+      }
+    }
+    toolUseContext = { ...toolUseContext, messages: messagesForQuery }
+
+    // Tier 2a: Pre-API microcompact (time-based idle clearing)
     queryCheckpoint('query_microcompact_start')
     const microcompactResult = await deps.microcompact(
       messagesForQuery,
@@ -279,7 +306,7 @@ async function* queryLoop(
       appendSystemContext(params.systemPrompt, params.systemContext),
     )
 
-    // Pre-API compaction slot E: autocompact
+    // Tier 4: Pre-API autocompact (Session Memory Tier 4a -> Full LLM Tier 4b)
     queryCheckpoint('query_autocompact_start')
     const { compactionResult, consecutiveFailures } = await deps.autocompact(
       messagesForQuery,
@@ -332,19 +359,6 @@ async function* queryLoop(
       }
     }
 
-    toolUseContext = { ...toolUseContext, messages: messagesForQuery }
-
-    // Enforce aggregate per-message tool-result budget with frozen ContentReplacementState
-    const contentReplacementState = provisionContentReplacementState(
-      toolUseContext as FullToolUseContext,
-    )
-    const ctxOptionsForBudget = getContextOptions(toolUseContext)
-    const budgeted = await applyToolResultBudget(
-      messagesForQuery,
-      contentReplacementState,
-      ctxOptionsForBudget.tools as readonly AnyTool[] | undefined,
-    )
-    messagesForQuery = budgeted.messages
     toolUseContext = { ...toolUseContext, messages: messagesForQuery }
 
     const assistantMessages: AssistantMessage[] = []
@@ -681,18 +695,29 @@ async function* queryLoop(
         return { reason: 'completed' }
       }
 
-      // Snapshot CacheSafeParams for cache-sharing forked agents
+      // Snapshot CacheSafeParams for cache-sharing forked agents & trigger post-sampling hooks
       if (
         params.querySource === 'repl_main_thread' ||
         params.querySource === 'sdk'
       ) {
+        const combinedMessages = [...messagesForQuery, ...assistantMessages]
         saveCacheSafeParams({
           systemPrompt: params.systemPrompt,
           userContext: params.userContext,
           systemContext: params.systemContext,
           toolUseContext,
-          forkContextMessages: [...messagesForQuery, ...assistantMessages],
+          forkContextMessages: combinedMessages,
         })
+        if (!isBareMode() && !toolUseContext.agentId) {
+          void runPostSamplingHooks({
+            messages: combinedMessages,
+            systemPrompt: params.systemPrompt,
+            userContext: params.userContext,
+            systemContext: params.systemContext,
+            toolUseContext: toolUseContext as FullToolUseContext,
+            querySource: params.querySource,
+          })
+        }
       }
 
       // Stop hooks slot

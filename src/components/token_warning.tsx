@@ -1,6 +1,7 @@
 import React from 'react'
 import { FIGURES } from '../constants/figures.js'
 import { Box } from '../ink/components/box.js'
+import { useCompactWarningSuppression } from '../services/compact/compact_warning_hook.js'
 import { ThemedText } from './design_system/themed_text.js'
 
 export type TokenWarningProps = {
@@ -14,7 +15,8 @@ export function TokenWarning({
   contextWindow,
   warningThreshold = 0.8,
 }: TokenWarningProps): React.ReactNode {
-  if (contextWindow <= 0) return null
+  const suppressed = useCompactWarningSuppression()
+  if (suppressed || contextWindow <= 0) return null
   const ratio = usedTokens / contextWindow
   if (ratio < warningThreshold) return null
 

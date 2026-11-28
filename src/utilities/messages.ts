@@ -21,6 +21,7 @@ import type { UUID } from 'crypto'
 import { getStrictToolResultPairing } from '../bootstrap/state.js'
 import { API_IMAGE_MAX_BASE64_SIZE } from '../constants/api_limits.js'
 import { NO_CONTENT_MESSAGE } from '../constants/messages.js'
+import { memoryFreshnessText } from '../memdir/memory_age.js'
 import { EMPTY_USAGE } from '../services/api/empty_usage.js'
 import type {
   Attachment,
@@ -858,6 +859,83 @@ export function normalizeAttachmentForApi(
           content: wrapInSystemReminder(
             `Hook ${errObj.command ?? ''} blocked continuation: ${errObj.blockingError}`,
           ),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'relevant_memories': {
+      const memories = Array.isArray(typed.memories)
+        ? (typed.memories as Array<{
+            path: string
+            content: string
+            mtimeMs: number
+          }>)
+        : []
+      if (memories.length === 0) return []
+      const sections = memories.map(mem => {
+        const freshness = memoryFreshnessText(mem.mtimeMs)
+        const note = freshness ? `\n${freshness}` : ''
+        return `Relevant memory (${mem.path}):${note}\n\n${mem.content}`
+      })
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(sections.join('\n\n---\n\n')),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'plan_file_reference': {
+      const planPath = String(typed.planFilePath ?? '')
+      const planContent = String(typed.planContent ?? '')
+      if (!planContent.trim()) return []
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(
+            `Active plan file (${planPath}):\n\n${planContent}`,
+          ),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'plan_mode': {
+      const planPath = typed.planFilePath
+        ? ` Plan file: ${String(typed.planFilePath)}.`
+        : ''
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(
+            `Plan mode is active.${planPath} Avoid mutating project files until the plan is approved.`,
+          ),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'invoked_skills': {
+      const skills = Array.isArray(typed.skills)
+        ? (typed.skills as Array<{ name: string; path: string; content: string }>)
+        : []
+      if (skills.length === 0) return []
+      const body = skills
+        .map(s => `Skill "${s.name}" (${s.path}):\n\n${s.content}`)
+        .join('\n\n---\n\n')
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(
+            `Previously invoked skills preserved across compaction:\n\n${body}`,
+          ),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'task_status': {
+      const tasks = Array.isArray(typed.tasks)
+        ? (typed.tasks as Array<{ id: string; subject: string; status: string }>)
+        : []
+      if (tasks.length === 0) return []
+      const lines = tasks.map(t => `- [${t.status}] #${t.id}: ${t.subject}`)
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(`Active tasks:\n${lines.join('\n')}`),
           isMeta: true,
         }),
       ]

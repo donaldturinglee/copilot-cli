@@ -7,6 +7,8 @@
 import type { BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import type { QuerySource } from '../constants/query_source.js'
 import { queryModelWithStreaming } from '../services/api/claude.js'
+import { autoCompactIfNeeded } from '../services/compact/auto_compact.js'
+import { microcompactMessages } from '../services/compact/micro_compact.js'
 import { runTools } from '../services/tools/tool_orchestration.js'
 import { ensurePhase4HooksBootstrapped } from '../utilities/hooks/bootstrap_hooks.js'
 import { handleStopHooks } from './stop_hooks.js'
@@ -103,16 +105,16 @@ export interface QueryDeps {
 }
 
 /**
- * Constructs default production dependencies for `query()`.
- * Compaction (`microcompact`/`autocompact`) start as no-op slots in Phase 2
- * and connect to the multi-tier compaction pipeline in Phase 7.
+ * Constructs default production dependencies for `query()`, wired to the
+ * Phase 7 multi-tier compaction pipeline (`microcompactMessages` +
+ * `autoCompactIfNeeded`), tool orchestration, and Stop hooks.
  */
 export function productionDeps(): QueryDeps {
   ensurePhase4HooksBootstrapped()
   return {
     callModel: queryModelWithStreaming,
-    microcompact: async messages => ({ messages }),
-    autocompact: async () => ({ wasCompacted: false }),
+    microcompact: microcompactMessages,
+    autocompact: autoCompactIfNeeded,
     uuid: () => randomUUID(),
     runTools,
     handleStopHooks,

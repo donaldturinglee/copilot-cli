@@ -1,15 +1,26 @@
+import type { UUID } from 'crypto'
 import { writeFileSync } from 'fs'
 import { resolve } from 'path'
 import React from 'react'
+import { getSessionId } from '../bootstrap/state.js'
 import { ExportDialog } from '../components/export_dialog.js'
+import { MemoryFileSelector } from '../components/memory/memory_file_selector.js'
 import { ResumeConversation } from '../screens/resume_conversation.js'
+import { resetMicrocompactState } from '../services/compact/micro_compact.js'
+import { resetLastMemoryMessageUuid } from '../services/session_memory/session_memory.js'
+import { resetSessionMemoryState } from '../services/session_memory/session_memory_utils.js'
 import type { AppState } from '../state/app_state_store.js'
 import type { Command, LocalJsxCommandContext } from '../types/command.js'
 import type { LogOption } from '../types/logs.js'
-import type { Message } from '../types/message.js'
 import { getCwd } from '../utilities/cwd.js'
 import { renderTranscriptMarkdown } from '../utilities/export_renderer.js'
+import { createEmptyFileHistoryState } from '../utilities/file_history.js'
 import { applyPermissionUpdates } from '../utilities/permissions/permission_update.js'
+import {
+  loadMessageLogs,
+  saveCustomTitle,
+  saveTag,
+} from '../utilities/session_storage.js'
 import {
   formatSideQuestionResponse,
   parseSideQuestion,
@@ -19,6 +30,7 @@ import {
   makeLocalJsxCommand,
   makePromptCommand,
 } from './registry.js'
+import { rewindCommand } from './rewind/index.js'
 
 export type CommandRuntimeHooks = {
   getAppState?: () => AppState
@@ -30,6 +42,7 @@ export type CommandRuntimeHooks = {
   addSessionTag?: (tag: string) => void
   copyToClipboard?: (text: string) => boolean
   getAllCommands?: () => Command[]
+  openMessageSelector?: () => void
 }
 
 export function getCommandRuntime(
@@ -45,6 +58,13 @@ export const SESSION_COMMANDS: Command[] = [
     description: 'Clear conversation history and start a fresh session',
     call: async (_args, context) => {
       context.setMessages(() => [])
+      resetSessionMemoryState()
+      resetLastMemoryMessageUuid()
+      resetMicrocompactState()
+      getCommandRuntime(context).setAppState?.(prev => ({
+        ...prev,
+        fileHistory: createEmptyFileHistoryState(),
+      }))
       return { type: 'text', value: 'Conversation cleared.' }
     },
   }),
@@ -54,7 +74,8 @@ export const SESSION_COMMANDS: Command[] = [
     description: 'Resume a previous saved conversation session',
     call: async (onDone, context) => {
       const runtime = getCommandRuntime(context)
-      const logs = runtime.getSavedLogs?.() ?? []
+      const logs =
+        runtime.getSavedLogs?.() ?? (await loadMessageLogs().catch(() => []))
       return (
         <ResumeConversation
           logs={logs}
@@ -85,6 +106,7 @@ export const SESSION_COMMANDS: Command[] = [
       const label = args.trim() || `branch-${Date.now().toString(36)}`
       const runtime = getCommandRuntime(context)
       runtime.setSessionTitle?.(label)
+      void saveCustomTitle(getSessionId() as UUID, label).catch(() => {})
       return {
         type: 'text',
         value: `Created conversation branch "${label}" (${context.messages.length} messages preserved).`,
@@ -92,31 +114,7 @@ export const SESSION_COMMANDS: Command[] = [
     },
   }),
 
-  makeLocalCommand({
-    name: 'rewind',
-    description: 'Rewind conversation by N turns (default 1)',
-    argumentHint: '[turns]',
-    call: async (args, context) => {
-      const count = Math.max(1, parseInt(args.trim(), 10) || 1)
-      let removed = 0
-      context.setMessages(prev => {
-        const next: Message[] = [...prev]
-        let turnsLeft = count
-        while (next.length > 0 && turnsLeft > 0) {
-          const popped = next.pop()
-          removed++
-          if (popped?.type === 'user' && !popped.isMeta) {
-            turnsLeft--
-          }
-        }
-        return next
-      })
-      return {
-        type: 'text',
-        value: `Rewound ${count} turn(s) (${removed} message(s) removed).`,
-      }
-    },
-  }),
+  rewindCommand,
 
   makeLocalCommand({
     name: 'rename',
@@ -128,6 +126,7 @@ export const SESSION_COMMANDS: Command[] = [
         return { type: 'text', value: 'Usage: /rename <new session title>' }
       }
       getCommandRuntime(context).setSessionTitle?.(title)
+      void saveCustomTitle(getSessionId() as UUID, title).catch(() => {})
       return { type: 'text', value: `Session renamed to "${title}".` }
     },
   }),
@@ -142,6 +141,7 @@ export const SESSION_COMMANDS: Command[] = [
         return { type: 'text', value: 'Usage: /tag <tag-name>' }
       }
       getCommandRuntime(context).addSessionTag?.(tag)
+      void saveTag(getSessionId() as UUID, tag).catch(() => {})
       return { type: 'text', value: `Added session tag #${tag}.` }
     },
   }),
@@ -282,14 +282,19 @@ export const SESSION_COMMANDS: Command[] = [
     },
   }),
 
-  makeLocalCommand({
+  makeLocalJsxCommand({
     name: 'memory',
-    description: 'Inspect loaded project/user memory files',
-    call: async () => {
-      return {
-        type: 'text',
-        value: `Memory workspace: ${getCwd()} (CLAUDE.md / .copilot/memory loaded automatically).`,
-      }
-    },
+    description: 'Inspect and configure project instructions and persistent memory',
+    call: async onDone => (
+      <MemoryFileSelector
+        onSelect={selectedPath =>
+          onDone(`Memory path: ${selectedPath}`)
+        }
+        onOpenFolder={folderPath =>
+          onDone(`Memory folder: ${folderPath}`)
+        }
+        onCancel={() => onDone()}
+      />
+    ),
   }),
 ]

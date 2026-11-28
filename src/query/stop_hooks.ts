@@ -10,7 +10,10 @@
  */
 
 import type { QuerySource } from '../constants/query_source.js'
+import { isExtractModeActive } from '../memdir/paths.js'
 import type { StopHookResult } from '../query/deps.js'
+import { executeAutoDream } from '../services/auto_dream/auto_dream.js'
+import { executeExtractMemories } from '../services/extract_memories/extract_memories.js'
 import type { ToolUseContext } from '../tool.js'
 import type {
   AssistantMessage,
@@ -25,7 +28,9 @@ import {
   createCacheSafeParams,
   saveCacheSafeParams,
 } from '../utilities/cache_safe_params.js'
+import { isBareMode } from '../utilities/env_utils.js'
 import { executeStopHooks } from '../utilities/hooks.js'
+import { logError } from '../utilities/log.js'
 import {
   createUserMessage,
   getAssistantMessageText,
@@ -106,6 +111,37 @@ export async function* handleStopHooks(
       content: combinedReason,
     })
     blockingMessages.push(feedbackMsg)
+  }
+
+  if (
+    blockingMessages.length === 0 &&
+    !isBareMode() &&
+    !toolUseContext.agentId &&
+    (querySource === 'repl_main_thread' || querySource === 'sdk')
+  ) {
+    if (isExtractModeActive()) {
+      void executeExtractMemories(
+        {
+          messages: allMessages,
+          systemPrompt,
+          userContext,
+          systemContext,
+          toolUseContext,
+        },
+        toolUseContext.appendSystemMessage,
+      ).catch(err => logError(err))
+    }
+
+    void executeAutoDream(
+      {
+        messages: allMessages,
+        systemPrompt,
+        userContext,
+        systemContext,
+        toolUseContext,
+      },
+      toolUseContext.appendSystemMessage,
+    ).catch(err => logError(err))
   }
 
   return {

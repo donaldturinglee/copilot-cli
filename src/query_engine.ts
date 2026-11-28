@@ -42,6 +42,11 @@ import type { Message } from './types/message.js'
 import { createAbortController } from './utilities/abort_controller.js'
 import { randomUUID } from './utilities/crypto.js'
 import { getFastModeState } from './utilities/fast_mode.js'
+import {
+  fileHistoryEnabled,
+  fileHistoryMakeSnapshot,
+  type FileHistoryUpdater,
+} from './utilities/file_history.js'
 import { executeUserPromptSubmitHooks } from './utilities/hooks.js'
 import { ensurePhase4HooksBootstrapped } from './utilities/hooks/bootstrap_hooks.js'
 import {
@@ -54,6 +59,7 @@ import {
   getAssistantMessageText,
   SYNTHETIC_MESSAGES,
 } from './utilities/messages.js'
+import { recordTranscript } from './utilities/session_storage.js'
 import {
   type SdkMessage,
   type SdkModelUsageWire,
@@ -181,6 +187,13 @@ export class QueryEngine {
    */
   getMessages(): readonly Message[] {
     return this.mutableMessages
+  }
+
+  /**
+   * Replaces accumulated conversation messages (used by `/rewind`, `/clear`, `/resume`).
+   */
+  setMessages(messages: readonly Message[]): void {
+    this.mutableMessages = [...messages]
   }
 
   /**
@@ -351,6 +364,18 @@ export class QueryEngine {
         }),
       )
     }
+
+    const updateFileHistoryState: FileHistoryUpdater = updater => {
+      this.config.setAppState(prev => ({
+        ...prev,
+        fileHistory: updater(prev.fileHistory),
+      }))
+    }
+    if (fileHistoryEnabled()) {
+      await fileHistoryMakeSnapshot(updateFileHistoryState, userMsg.uuid)
+    }
+    void recordTranscript(this.mutableMessages).catch(() => {})
+
     const messages: Message[] = [...this.mutableMessages]
 
     const fastModeState = getFastModeState(mainLoopModel, appState.fastMode)
@@ -385,6 +410,7 @@ export class QueryEngine {
       messages,
       getAppState: this.config.getAppState,
       setAppState: this.config.setAppState,
+      updateFileHistoryState,
       readFileState: this.readFileState,
       contentReplacementState: this.contentReplacementState,
       discoveredSkillNames: this.discoveredSkillNames,
@@ -471,6 +497,7 @@ export class QueryEngine {
               )
             }
             this.mutableMessages.push(event)
+            void recordTranscript(this.mutableMessages).catch(() => {})
             yield* normalizeMessage(event)
             break
           }
@@ -478,6 +505,9 @@ export class QueryEngine {
           case 'user':
           case 'progress': {
             this.mutableMessages.push(event)
+            if (event.type === 'user') {
+              void recordTranscript(this.mutableMessages).catch(() => {})
+            }
             yield* normalizeMessage(event)
             break
           }

@@ -9,13 +9,18 @@
  */
 
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
+import type { UUID } from 'crypto'
 import { dirname, extname } from 'path'
 import { z } from 'zod/v4'
 import { addToTotalLinesChanged } from '../../bootstrap/state.js'
 import { DEFAULT_MAX_RESULT_SIZE_CHARS } from '../../constants/tool_limits.js'
 import { FILE_EDIT_TOOL_NAME } from '../../constants/tools.js'
+import { isTeamMemPath } from '../../memdir/team_mem_paths.js'
+import { checkTeamMemSecrets } from '../../services/team_memory_sync/team_mem_secret_guard.js'
+import { notifyTeamMemoryWrite } from '../../services/team_memory_sync/watcher.js'
 import { buildTool, type ToolUseContext } from '../../tool.js'
 import { getEmptyToolPermissionContext } from '../../types/permissions.js'
+import { randomUUID } from '../../utilities/crypto.js'
 import {
   countLinesChanged,
   getPatchFromContents,
@@ -28,6 +33,7 @@ import {
   getFileModificationTime,
   writeTextContent,
 } from '../../utilities/file.js'
+import { fileHistoryTrackEdit } from '../../utilities/file_history.js'
 import { logFileOperation } from '../../utilities/file_operation_analytics.js'
 import { getFsImplementation } from '../../utilities/fs_operations.js'
 import { expandPath } from '../../utilities/path.js'
@@ -151,6 +157,14 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
     // Creating a brand-new file with empty old_string
     if (!fileExists) {
       if (input.old_string === '') {
+        const secretError = checkTeamMemSecrets(fullPath, input.new_string)
+        if (secretError) {
+          return {
+            result: false,
+            message: secretError,
+            errorCode: FILE_EDIT_ERROR_CODES.INVALID_SETTINGS_JSON,
+          }
+        }
         const settingsCheck = validateInputForSettingsFileEdit(
           fullPath,
           input.new_string,
@@ -256,6 +270,14 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
       actualNew,
       replaceAll,
     )
+    const secretError = checkTeamMemSecrets(fullPath, preview)
+    if (secretError) {
+      return {
+        result: false,
+        message: secretError,
+        errorCode: FILE_EDIT_ERROR_CODES.INVALID_SETTINGS_JSON,
+      }
+    }
     const settingsCheck = validateInputForSettingsFileEdit(fullPath, preview)
     if (!settingsCheck.valid) {
       return {
@@ -268,7 +290,7 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
     return { result: true }
   },
 
-  async call(input, context: ToolUseContext) {
+  async call(input, context: ToolUseContext, _canUseTool, parentMessage) {
     const fullPath = expandPath(input.file_path)
     const fsImpl = getFsImplementation()
     const replaceAll = Boolean(input.replace_all)
@@ -303,6 +325,21 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
       replaceAll,
     )
 
+    if (context.updateFileHistoryState) {
+      const parentUuid =
+        parentMessage &&
+        typeof parentMessage === 'object' &&
+        'uuid' in parentMessage &&
+        typeof (parentMessage as { uuid?: unknown }).uuid === 'string'
+          ? (parentMessage as { uuid: string }).uuid
+          : undefined
+      await fileHistoryTrackEdit(
+        context.updateFileHistoryState,
+        fullPath,
+        (parentUuid ?? randomUUID()) as UUID,
+      )
+    }
+
     fsImpl.mkdirSync(dirname(fullPath))
     writeTextContent(
       fullPath,
@@ -310,6 +347,10 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
       encoding,
       endings,
     )
+
+    if (isTeamMemPath(fullPath)) {
+      notifyTeamMemoryWrite()
+    }
 
     const newMtime = getFileModificationTime(fullPath)
     context.readFileState?.set(fullPath, {

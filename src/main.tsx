@@ -919,6 +919,20 @@ export function createCliProgram(argv: string[] = process.argv) {
         disallowedTools: Array.isArray(options.disallowedTools)
           ? (options.disallowedTools as string[])
           : undefined,
+        continue: Boolean(options.continue),
+        resume:
+          typeof options.resume === 'string' || typeof options.resume === 'boolean'
+            ? options.resume
+            : undefined,
+        forkSession: Boolean(options.forkSession),
+        resumeSessionAt:
+          typeof options.resumeSessionAt === 'string'
+            ? options.resumeSessionAt
+            : undefined,
+        rewindFiles:
+          typeof options.rewindFiles === 'string'
+            ? options.rewindFiles
+            : undefined,
       })
       return
     }

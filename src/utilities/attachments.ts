@@ -4,6 +4,7 @@
  * isolation, plus `@file` and `@agent` mention parsers.
  */
 
+import { readFile } from 'fs/promises'
 import { dirname, isAbsolute, relative, resolve } from 'path'
 import {
   getLastEmittedDate,
@@ -16,6 +17,9 @@ import {
 } from '../bootstrap/state.js'
 import { getLocalIsoDate } from '../constants/common.js'
 import type { QuerySource } from '../constants/query_source.js'
+import { findRelevantMemories } from '../memdir/find_relevant_memories.js'
+import { getAutoMemPath, isAutoMemoryEnabled } from '../memdir/paths.js'
+import type { sideQuery } from './side_query.js'
 import type { ToolUseContext } from '../types/forward.js'
 import type {
   AttachmentMessage,
@@ -65,6 +69,17 @@ export type CoreAttachment =
   | { type: 'mcp_resource'; server: string; uri: string; content: string }
   | { type: 'hook_additional_context'; content: string[]; hookName: string }
   | { type: 'hook_blocking_error'; blockingError: { command: string; blockingError: string } }
+  | {
+      type: 'relevant_memories'
+      memories: Array<{ path: string; content: string; mtimeMs: number }>
+    }
+  | { type: 'plan_file_reference'; planFilePath: string; planContent: string }
+  | { type: 'plan_mode'; planFilePath?: string; reminderType?: 'full' | 'sparse' }
+  | {
+      type: 'invoked_skills'
+      skills: Array<{ name: string; path: string; content: string }>
+    }
+  | { type: 'task_status'; tasks: Array<{ id: string; subject: string; status: string }> }
   | { type: string; [key: string]: unknown }
 
 /**
@@ -266,6 +281,76 @@ function getNestedMemoryAttachments(
   }
 
   return attachments
+}
+
+const MAX_RELEVANT_MEMORY_BYTES = 4_096
+const MAX_RELEVANT_SESSION_BYTES = 60 * 1024
+
+let surfacedMemoryBytesInSession = 0
+
+export function resetRelevantMemoryBudgetForTesting(): void {
+  surfacedMemoryBytesInSession = 0
+}
+
+/**
+ * Selects up to 5 relevant persistent memories for `query` subject to the
+ * 4KB-per-file and 60KB-per-session cumulative surfacing budget.
+ */
+export async function getRelevantMemoryAttachments(
+  query: string,
+  options?: {
+    memoryDir?: string
+    alreadySurfaced?: ReadonlySet<string>
+    signal?: AbortSignal
+    queryFn?: typeof sideQuery
+  },
+): Promise<CoreAttachment[]> {
+  if (!query.trim() || !isAutoMemoryEnabled()) {
+    return []
+  }
+  if (surfacedMemoryBytesInSession >= MAX_RELEVANT_SESSION_BYTES) {
+    return []
+  }
+
+  const memoryDir = options?.memoryDir ?? getAutoMemPath()
+  const selected = await findRelevantMemories(
+    query,
+    memoryDir,
+    options?.signal ?? new AbortController().signal,
+    [],
+    options?.alreadySurfaced,
+    options?.queryFn,
+  )
+  if (selected.length === 0) {
+    return []
+  }
+
+  const memories: Array<{ path: string; content: string; mtimeMs: number }> = []
+  for (const item of selected) {
+    if (surfacedMemoryBytesInSession >= MAX_RELEVANT_SESSION_BYTES) {
+      break
+    }
+    try {
+      const raw = await readFile(item.path, 'utf8')
+      const remaining = MAX_RELEVANT_SESSION_BYTES - surfacedMemoryBytesInSession
+      const cap = Math.min(MAX_RELEVANT_MEMORY_BYTES, remaining)
+      const buf = Buffer.from(raw, 'utf8')
+      const content =
+        buf.byteLength > cap
+          ? `${buf.subarray(0, cap).toString('utf8')}\n[... memory truncated ...]`
+          : raw
+      surfacedMemoryBytesInSession += Buffer.byteLength(content, 'utf8')
+      memories.push({
+        path: item.path,
+        content,
+        mtimeMs: item.mtimeMs,
+      })
+    } catch {
+      // Ignore vanished memory files
+    }
+  }
+
+  return memories.length > 0 ? [{ type: 'relevant_memories', memories }] : []
 }
 
 async function maybe(

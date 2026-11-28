@@ -23,6 +23,7 @@ import {
   getSessionId,
   getSessionTrustAccepted,
 } from '../bootstrap/state.js'
+import { getTranscriptPath as getSessionTranscriptPath } from './session_storage.js'
 import type {
   BashCommandHook,
   HookCommand,
@@ -98,7 +99,7 @@ export function resetOnceHooksForTesting(): void {
 }
 
 export function getTranscriptPath(): string {
-  return join(getClaudeConfigHomeDir(), 'projects', `${getSessionId()}.jsonl`)
+  return getSessionTranscriptPath()
 }
 
 export function createBaseHookInput(

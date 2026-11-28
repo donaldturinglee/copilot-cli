@@ -5,10 +5,20 @@ import { HooksDialog } from '../components/hooks/hooks_dialog.js'
 import { SandboxDialog } from '../components/sandbox/sandbox_dialog.js'
 import { ConfigDialog } from '../components/settings/config_dialog.js'
 import { Stats } from '../components/stats.js'
+import { clearContextCaches } from '../context.js'
 import { formatTotalCost, getTotalInputTokens, getTotalOutputTokens } from '../cost_tracker.js'
+import { compactConversation } from '../services/compact/compact.js'
+import { suppressCompactWarning } from '../services/compact/compact_warning_state.js'
+import { runPostCompactCleanup } from '../services/compact/post_compact_cleanup.js'
+import { trySessionMemoryCompaction } from '../services/compact/session_memory_compact.js'
+import { setLastSummarizedMessageId } from '../services/session_memory/session_memory_utils.js'
 import type { Command } from '../types/command.js'
-import type { SystemCompactBoundaryMessage } from '../types/message.js'
+import type { ToolUseContext } from '../types/forward.js'
+import type { Message, SystemCompactBoundaryMessage } from '../types/message.js'
+import { analyzeContextBreakdown } from '../utilities/analyze_context.js'
+import { getLastCacheSafeParams } from '../utilities/cache_safe_params.js'
 import { randomUUID } from '../utilities/crypto.js'
+import { getDefaultMainLoopModel } from '../utilities/model/model.js'
 import { computeSessionStats } from '../utilities/stats.js'
 import { makeLocalCommand, makeLocalJsxCommand } from './registry.js'
 import { getCommandRuntime } from './session_commands.js'
@@ -23,24 +33,95 @@ export const CONTEXT_SECURITY_COMMANDS: Command[] = [
       if (count <= 2) {
         return { type: 'text', value: 'Conversation is already concise.' }
       }
+
+      const customInstructions = args.trim() || undefined
+
+      // Tier 4a: try zero-LLM Session Memory compaction when no custom focus instructions
+      if (!customInstructions) {
+        const smResult = await trySessionMemoryCompaction(context.messages).catch(
+          () => null,
+        )
+        if (smResult) {
+          const nextMessages: Message[] = [
+            smResult.boundaryMarker,
+            ...smResult.summaryMessages,
+            ...(smResult.messagesToKeep ?? []),
+            ...smResult.attachments,
+            ...smResult.hookResults,
+          ]
+          context.setMessages(() => nextMessages)
+          suppressCompactWarning()
+          setLastSummarizedMessageId(undefined)
+          runPostCompactCleanup('compact')
+          clearContextCaches()
+          return {
+            type: 'text',
+            value: `Compacted conversation using session memory (${smResult.preCompactTokenCount ?? 0} -> ${smResult.postCompactTokenCount ?? 0} tokens).`,
+          }
+        }
+      }
+
+      // Tier 4b: Full LLM compaction when CacheSafeParams are available from a live session
+      const cacheSafeParams = getLastCacheSafeParams()
+      if (cacheSafeParams && process.env.NODE_ENV !== 'test') {
+        try {
+          const toolUseContext: ToolUseContext = {
+            abortController: context.abortController,
+            messages: context.messages,
+            readFileState: context.readFileState,
+            getAppState: getCommandRuntime(context).getAppState,
+            setAppState: getCommandRuntime(context).setAppState,
+          }
+          const result = await compactConversation(
+            context.messages,
+            toolUseContext,
+            cacheSafeParams,
+            false,
+            customInstructions,
+            false,
+          )
+          const nextMessages: Message[] = [
+            result.boundaryMarker,
+            ...result.summaryMessages,
+            ...result.attachments,
+            ...result.hookResults,
+          ]
+          context.setMessages(() => nextMessages)
+          suppressCompactWarning()
+          setLastSummarizedMessageId(undefined)
+          runPostCompactCleanup('compact')
+          clearContextCaches()
+          return {
+            type: 'text',
+            value: `Compacted ${count} messages (${result.preCompactTokenCount ?? 0} -> ${result.postCompactTokenCount ?? 0} tokens).`,
+          }
+        } catch {
+          // Fall back cleanly to local boundary truncation when offline/unauthenticated
+        }
+      }
+
       const keepTail = context.messages.slice(-2)
       const boundary: SystemCompactBoundaryMessage = {
         type: 'system',
         subtype: 'compact_boundary',
         level: 'info',
-        content: args.trim()
-          ? `Compacted ${count - keepTail.length} earlier messages (focus: ${args.trim()})`
+        content: customInstructions
+          ? `Compacted ${count - keepTail.length} earlier messages (focus: ${customInstructions})`
           : `Compacted ${count - keepTail.length} earlier messages`,
         compactMetadata: {
           trigger: 'manual',
           preTokens: getTotalInputTokens() + getTotalOutputTokens(),
           messagesSummarized: count - keepTail.length,
-          ...(args.trim() ? { userContext: args.trim() } : {}),
+          ...(customInstructions ? { userContext: customInstructions } : {}),
         },
         uuid: randomUUID() as UUID,
         timestamp: new Date().toISOString(),
       }
       context.setMessages(() => [boundary, ...keepTail])
+      suppressCompactWarning()
+      setLastSummarizedMessageId(undefined)
+      runPostCompactCleanup('compact')
+      clearContextCaches()
       return {
         type: 'text',
         value: `Compacted ${count - keepTail.length} messages.`,
@@ -53,11 +134,19 @@ export const CONTEXT_SECURITY_COMMANDS: Command[] = [
     description: 'Visualize current context window usage',
     immediate: true,
     call: async (onDone, context) => {
-      const used = getTotalInputTokens() + getTotalOutputTokens()
+      const runtime = getCommandRuntime(context)
+      const model =
+        runtime.getAppState?.().mainLoopModel ?? getDefaultMainLoopModel()
+      const breakdown = await analyzeContextBreakdown({
+        messages: context.messages,
+        model,
+      })
+      const reportedUsed = getTotalInputTokens() + getTotalOutputTokens()
+      const used = Math.max(reportedUsed, breakdown.totalTokens)
       return (
         <ContextVisualization
           usedTokens={used}
-          contextWindow={200_000}
+          contextWindow={breakdown.contextWindow}
           messageCount={context.messages.length}
           toolCount={0}
           onClose={() => onDone()}

@@ -4,6 +4,7 @@
  * live text streaming, cost reporting, and clean exit-code handling.
  */
 
+import type { UUID } from 'crypto'
 import {
   setMainLoopModelOverride,
   setSdkBetas,
@@ -12,6 +13,7 @@ import { formatTotalCost, saveCurrentSessionCosts } from '../cost_tracker.js'
 import { createCanUseTool } from '../hooks/tool_permission/use_can_use_tool.js'
 import { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
+import { drainPendingExtraction } from '../services/extract_memories/extract_memories.js'
 import {
   getDefaultAppState,
   type AppState,
@@ -19,10 +21,18 @@ import {
 import { onChangeAppState } from '../state/on_change_app_state.js'
 import { createStore } from '../state/store.js'
 import { assembleToolPool } from '../tools.js'
+import type { Message } from '../types/message.js'
 import type { PermissionMode, ToolPermissionContext } from '../types/permissions.js'
 import { hasConsoleBillingAccess } from '../utilities/billing.js'
+import { loadConversationForResume } from '../utilities/conversation_recovery.js'
 import { getCwd } from '../utilities/cwd.js'
 import { parseEffortValue } from '../utilities/effort.js'
+import {
+  createEmptyFileHistoryState,
+  fileHistoryRestoreStateFromLog,
+  fileHistoryRewind,
+  type FileHistoryState,
+} from '../utilities/file_history.js'
 import { gracefulShutdownSync } from '../utilities/graceful_shutdown.js'
 import { logHeadlessProfilerTurn } from '../utilities/headless_profiler.js'
 import {
@@ -33,6 +43,9 @@ import { ensurePhase4HooksBootstrapped } from '../utilities/hooks/bootstrap_hook
 import type { SdkMessage, SdkResultMessage } from '../utilities/messages/mappers.js'
 import { loadToolPermissionContextFromSettings } from '../utilities/permissions/permissions_loader.js'
 import { writeToStdout } from '../utilities/process.js'
+import { processResumedConversation } from '../utilities/session_restore.js'
+import { flushSessionStorage } from '../utilities/session_storage.js'
+import { parseSessionIdentifier } from '../utilities/session_url.js'
 import { jsonStringify } from '../utilities/slow_operations.js'
 import type { ThinkingConfig } from '../utilities/thinking.js'
 
@@ -60,6 +73,11 @@ export interface HeadlessRunOptions {
   tools?: string[]
   allowedTools?: string[]
   disallowedTools?: string[]
+  continue?: boolean
+  resume?: string | boolean
+  forkSession?: boolean
+  resumeSessionAt?: string
+  rewindFiles?: string
   /** Injectable test overrides */
   deps?: QueryDeps
   stdoutWriter?: (text: string) => void
@@ -126,6 +144,39 @@ export async function runHeadless(
   const writeErr =
     options.stderrWriter ?? ((text: string) => process.stderr.write(text))
 
+  // Handle `--rewind-files <userMessageUuid>` headless file restoration
+  if (options.rewindFiles) {
+    const sourceId =
+      typeof options.resume === 'string' ? options.resume : undefined
+    const parsedId = sourceId ? parseSessionIdentifier(sourceId) : null
+    const loaded = await loadConversationForResume(
+      parsedId?.kind === 'session_id' ? parsedId.sessionId : sourceId,
+      parsedId?.kind === 'jsonl_file' ? parsedId.path : undefined,
+      { skipSessionStartHooks: true },
+    )
+    if (!loaded) {
+      writeErr('Error: No session found to rewind files.\n')
+      if (!options.skipExit) gracefulShutdownSync(1)
+      return { exitCode: 1, messages: [] }
+    }
+    let restoredFileHistory: FileHistoryState = createEmptyFileHistoryState()
+    if (loaded.log.fileHistorySnapshots?.length) {
+      fileHistoryRestoreStateFromLog(loaded.log.fileHistorySnapshots, next => {
+        restoredFileHistory = next
+      })
+    }
+    await fileHistoryRewind(
+      updater => {
+        restoredFileHistory = updater(restoredFileHistory)
+      },
+      options.rewindFiles as UUID,
+    )
+    writeOut(`Restored files to checkpoint ${options.rewindFiles}\n`)
+    await flushSessionStorage()
+    if (!options.skipExit) gracefulShutdownSync(0)
+    return { exitCode: 0, messages: [] }
+  }
+
   if (!prompt.trim()) {
     writeErr('Error: Input must be provided either through stdin or as a prompt argument when using --print.\n')
     if (!options.skipExit) {
@@ -168,12 +219,41 @@ export async function runHeadless(
       ),
     })
 
+  let resumedMessages: Message[] | undefined
+  let resumedFileHistory: FileHistoryState = initialState.fileHistory
+  if (options.continue || options.resume) {
+    const resumeArg =
+      typeof options.resume === 'string' ? options.resume : undefined
+    const parsed = resumeArg ? parseSessionIdentifier(resumeArg) : null
+    const loaded = await loadConversationForResume(
+      parsed?.kind === 'session_id' ? parsed.sessionId : resumeArg,
+      parsed?.kind === 'jsonl_file' ? parsed.path : undefined,
+    )
+    if (loaded) {
+      const processed = await processResumedConversation(
+        loaded.log,
+        loaded.messages,
+        {
+          forkSession: Boolean(options.forkSession),
+          resumeSessionAt: options.resumeSessionAt,
+        },
+      )
+      resumedMessages = processed.messages
+      if (loaded.log.fileHistorySnapshots?.length) {
+        fileHistoryRestoreStateFromLog(loaded.log.fileHistorySnapshots, next => {
+          resumedFileHistory = next
+        })
+      }
+    }
+  }
+
   const store = createStore<AppState>(
     {
       ...initialState,
       verbose: Boolean(options.verbose),
       effortValue,
       toolPermissionContext: initialPermCtx,
+      fileHistory: resumedFileHistory,
     },
     onChangeAppState,
   )
@@ -211,6 +291,7 @@ export async function runHeadless(
     canUseTool,
     getAppState: () => store.getState(),
     setAppState: updater => store.setState(updater),
+    initialMessages: resumedMessages,
     customSystemPrompt: options.systemPrompt,
     appendSystemPrompt: effectiveAppendSystemPrompt,
     userSpecifiedModel: options.model,
@@ -344,6 +425,8 @@ export async function runHeadless(
 
   logHeadlessProfilerTurn()
   saveCurrentSessionCosts()
+  await drainPendingExtraction()
+  await flushSessionStorage()
 
   if (!options.skipExit) {
     gracefulShutdownSync(exitCode)

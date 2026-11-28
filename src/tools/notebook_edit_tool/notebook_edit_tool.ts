@@ -8,7 +8,7 @@
  */
 
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
-import { randomBytes } from 'crypto'
+import { randomBytes, type UUID } from 'crypto'
 import { extname } from 'path'
 import { z } from 'zod/v4'
 import { DEFAULT_MAX_RESULT_SIZE_CHARS } from '../../constants/tool_limits.js'
@@ -20,6 +20,7 @@ import type {
   NotebookContent,
 } from '../../types/notebook.js'
 import { getEmptyToolPermissionContext } from '../../types/permissions.js'
+import { randomUUID } from '../../utilities/crypto.js'
 import { isEnoent } from '../../utilities/errors.js'
 import {
   detectFileEncoding,
@@ -27,6 +28,7 @@ import {
   getFileModificationTime,
   writeTextContent,
 } from '../../utilities/file.js'
+import { fileHistoryTrackEdit } from '../../utilities/file_history.js'
 import { logFileOperation } from '../../utilities/file_operation_analytics.js'
 import { getFsImplementation } from '../../utilities/fs_operations.js'
 import { parseCellId } from '../../utilities/notebook.js'
@@ -260,7 +262,7 @@ export const NotebookEditTool = buildTool<
     return { result: true }
   },
 
-  async call(input, context: ToolUseContext) {
+  async call(input, context: ToolUseContext, _canUseTool, parentMessage) {
     const fullPath = expandPath(input.notebook_path)
     const fsImpl = getFsImplementation()
     const encoding = detectFileEncoding(fullPath)
@@ -269,6 +271,21 @@ export const NotebookEditTool = buildTool<
     const notebook = JSON.parse(raw) as NotebookContent
     const language = notebook.metadata?.language_info?.name ?? 'python'
     const editMode: NotebookEditMode = input.edit_mode ?? 'replace'
+
+    if (context.updateFileHistoryState) {
+      const parentUuid =
+        parentMessage &&
+        typeof parentMessage === 'object' &&
+        'uuid' in parentMessage &&
+        typeof (parentMessage as { uuid?: unknown }).uuid === 'string'
+          ? (parentMessage as { uuid: string }).uuid
+          : undefined
+      await fileHistoryTrackEdit(
+        context.updateFileHistoryState,
+        fullPath,
+        (parentUuid ?? randomUUID()) as UUID,
+      )
+    }
 
     let resultingCellId = input.cell_id
     let resultingCellType: NotebookCellType = input.cell_type ?? 'code'

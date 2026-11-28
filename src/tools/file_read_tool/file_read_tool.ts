@@ -18,6 +18,8 @@ import { readFile } from 'fs/promises'
 import { extname } from 'path'
 import { z } from 'zod/v4'
 import { FILE_READ_TOOL_NAME } from '../../constants/tools.js'
+import { memoryFreshnessNote } from '../../memdir/memory_age.js'
+import { isAutoMemPath } from '../../memdir/paths.js'
 import { buildTool, type ToolUseContext } from '../../tool.js'
 import type { ImageDimensions } from '../../types/forward.js'
 import type { NotebookCellSource } from '../../types/notebook.js'
@@ -96,6 +98,7 @@ export type FileReadOutput =
         startLine: number
         totalLines: number
         truncatedByBytes?: boolean
+        freshnessNote?: string
       }
     }
   | {
@@ -463,6 +466,10 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
       ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
       isPartialView,
     })
+    context.nestedMemoryAttachmentTriggers?.add(fullPath)
+    const freshnessNote = isAutoMemPath(fullPath)
+      ? memoryFreshnessNote(result.mtimeMs)
+      : ''
 
     logFileOperation({
       operation: 'read',
@@ -482,6 +489,7 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
           startLine,
           totalLines: result.totalLines,
           ...(result.truncatedByBytes ? { truncatedByBytes: true } : {}),
+          ...(freshnessNote ? { freshnessNote } : {}),
         },
       },
     }
@@ -538,8 +546,14 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
         return mapNotebookCellsToToolResult(output.file.cells, toolUseId)
 
       case 'text': {
-        const { content, startLine, numLines, totalLines, truncatedByBytes } =
-          output.file
+        const {
+          content,
+          startLine,
+          numLines,
+          totalLines,
+          truncatedByBytes,
+          freshnessNote,
+        } = output.file
         if (totalLines === 0 && content.length === 0) {
           return {
             type: 'tool_result',
@@ -559,6 +573,7 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
           content: truncateLongLines(content),
           startLine,
         })
+        const prefix = freshnessNote ? `${freshnessNote}\n` : ''
         const notes: string[] = []
         if (truncatedByBytes) {
           notes.push(
@@ -576,7 +591,7 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
         return {
           type: 'tool_result',
           tool_use_id: toolUseId,
-          content: display + suffix,
+          content: prefix + display + suffix,
         }
       }
     }

@@ -53,10 +53,12 @@ import { API_MAX_MEDIA_PER_REQUEST } from '../../constants/api_limits.js'
 import {
   ADVISOR_BETA_HEADER,
   CONTEXT_1M_BETA_HEADER,
+  CONTEXT_MANAGEMENT_BETA_HEADER,
   EFFORT_BETA_HEADER,
   FAST_MODE_BETA_HEADER,
   getAfkModeBetaHeader,
   PROMPT_CACHING_SCOPE_BETA_HEADER,
+  REDACT_THINKING_BETA_HEADER,
   STRUCTURED_OUTPUTS_BETA_HEADER,
   TASK_BUDGETS_BETA_HEADER,
 } from '../../constants/betas.js'
@@ -160,6 +162,7 @@ import {
 } from '../claude_ai_limits.js'
 import { withStreamingVcr, withVcr } from '../vcr.js'
 import { getAnthropicClient } from './client.js'
+import { getApiContextManagement } from '../compact/api_microcompact.js'
 import {
   accumulateUsage,
   EMPTY_USAGE,
@@ -1052,6 +1055,18 @@ async function* queryModelInner({
       !isFastModeCooldown() &&
       isFastModeSupportedByModel(options.model)
 
+    const contextManagement = getApiContextManagement({
+      hasThinking: Boolean(thinkingParam),
+      isRedactThinkingActive: betasParams.includes(REDACT_THINKING_BETA_HEADER),
+      clearAllThinking: getThinkingClearLatched() === true,
+    })
+    if (
+      contextManagement &&
+      !betasParams.includes(CONTEXT_MANAGEMENT_BETA_HEADER)
+    ) {
+      betasParams.push(CONTEXT_MANAGEMENT_BETA_HEADER)
+    }
+
     const params: Record<string, unknown> = {
       model: normalizeModelStringForApi(options.model),
       messages: apiMessages as BetaMessageParam[],
@@ -1062,6 +1077,7 @@ async function* queryModelInner({
       ...(options.toolChoice ? { tool_choice: options.toolChoice } : {}),
       ...(betasParams.length > 0 ? { betas: betasParams } : {}),
       ...(thinkingParam ? { thinking: thinkingParam } : {}),
+      ...(contextManagement ? { context_management: contextManagement } : {}),
       ...(!thinkingParam
         ? { temperature: options.temperatureOverride ?? 1 }
         : {}),

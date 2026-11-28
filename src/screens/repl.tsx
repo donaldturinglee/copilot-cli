@@ -14,6 +14,10 @@ import { FullscreenLayout } from '../components/fullscreen_layout.js'
 import { GlobalSearchDialog } from '../components/global_search_dialog.js'
 import { HistorySearchDialog } from '../components/history_search_dialog.js'
 import { LogoV2 } from '../components/logo_v2.js'
+import {
+  MessageSelector,
+  textForResubmit,
+} from '../components/message_selector.js'
 import { Messages } from '../components/messages.js'
 import { PermissionRequest } from '../components/permissions/permission_request.js'
 import { PromptInput } from '../components/prompt_input/prompt_input.js'
@@ -25,9 +29,11 @@ import { StatusNotices, type StatusNotice } from '../components/status_notices.j
 import { TokenWarning } from '../components/token_warning.js'
 import { getTotalInputTokens, getTotalOutputTokens } from '../cost_tracker.js'
 import { appendHistory, readHistory, type PromptHistoryEntry } from '../history.js'
+import { useAwaySummary } from '../hooks/use_away_summary.js'
 import { useCanUseTool } from '../hooks/use_can_use_tool.js'
 import { useCancelRequest } from '../hooks/use_cancel_request.js'
 import { useCommandQueue } from '../hooks/use_command_queue.js'
+import { useFileHistorySnapshotInit } from '../hooks/use_file_history_snapshot_init.js'
 import { useMainLoopModel } from '../hooks/use_main_loop_model.js'
 import { useTerminalSize } from '../hooks/use_terminal_size.js'
 import { Box } from '../ink/components/box.js'
@@ -42,6 +48,7 @@ import {
 } from '../interactive_helpers.js'
 import type { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
+import { partialCompactConversation } from '../services/compact/compact.js'
 import {
   useAppState,
   useAppStateStore,
@@ -51,11 +58,15 @@ import type { Command } from '../types/command.js'
 import type {
   AssistantMessage,
   Message,
+  PartialCompactDirection,
   SystemLocalCommandMessage,
+  UserMessage,
 } from '../types/message.js'
+import { getLastCacheSafeParams } from '../utilities/cache_safe_params.js'
 import { getGlobalConfig } from '../utilities/config.js'
 import { randomUUID } from '../utilities/crypto.js'
 import { getCwd } from '../utilities/cwd.js'
+import { fileHistoryRewind } from '../utilities/file_history.js'
 import { MessageQueueManager } from '../utilities/message_queue_manager.js'
 import { getNextPermissionMode } from '../utilities/permissions/get_next_permission_mode.js'
 import type { BashExecutorFn } from '../utilities/process_user_input/process_bash_command.js'
@@ -81,7 +92,9 @@ export type ReplProps = {
   onMessagesChange?: (messages: readonly Message[]) => void
 }
 
-type ActiveModal = 'none' | 'history' | 'search' | 'quick_open'
+type ActiveModal = 'none' | 'history' | 'search' | 'quick_open' | 'rewind'
+
+const DOUBLE_ESC_WINDOW_MS = 800
 
 /**
  * Interactive 3-slot Copilot CLI REPL integrating:
@@ -184,6 +197,16 @@ export function REPL({
   const [historyEntries, setHistoryEntries] = useState<PromptHistoryEntry[]>(
     () => readHistory({ historyPath }),
   )
+  const lastEscTimestampRef = useRef<number>(0)
+
+  useFileHistorySnapshotInit(
+    undefined,
+    store.getState().fileHistory,
+    next => setAppState(prev => ({ ...prev, fileHistory: next })),
+  )
+  useAwaySummary(messages, setMessages, isLoading, {
+    enabled: !skipHooks && process.env.NODE_ENV !== 'test',
+  })
 
   const scrollRef = useRef<ScrollBoxHandle | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -332,6 +355,7 @@ export function REPL({
             return explicit !== undefined ? explicit : !vimEnabled
           },
           getAllCommands: () => commands,
+          openMessageSelector: () => setActiveModal('rewind'),
         },
       })
 
@@ -462,11 +486,23 @@ export function REPL({
           event.stopImmediatePropagation()
           return
         }
-        if (key.escape && isLoading && !pendingRequest && !activeCommandOverlay) {
-          cancelRequest()
-          appendSystemInfo('Interrupted by user.', 'warning')
-          event.stopImmediatePropagation()
-          return
+        if (key.escape && !pendingRequest && !activeCommandOverlay) {
+          if (isLoading) {
+            cancelRequest()
+            appendSystemInfo('Interrupted by user.', 'warning')
+            event.stopImmediatePropagation()
+            return
+          }
+          if (activeModal === 'none' && input.length === 0) {
+            const now = Date.now()
+            if (now - lastEscTimestampRef.current <= DOUBLE_ESC_WINDOW_MS) {
+              lastEscTimestampRef.current = 0
+              setActiveModal('rewind')
+              event.stopImmediatePropagation()
+              return
+            }
+            lastEscTimestampRef.current = now
+          }
         }
         if (key.ctrl && key.shift && ch.toLowerCase() === 'f') {
           setActiveModal('search')
@@ -510,6 +546,72 @@ export function REPL({
     Boolean(activeCommandOverlay) ||
     activeModal !== 'none'
 
+  const handleRestoreCode = useCallback(
+    async (target: UserMessage) => {
+      await fileHistoryRewind(
+        updater =>
+          setAppState(prev => ({
+            ...prev,
+            fileHistory: updater(prev.fileHistory),
+          })),
+        target.uuid,
+      )
+      appendSystemInfo(`Restored code to checkpoint ${target.uuid}.`)
+    },
+    [setAppState, appendSystemInfo],
+  )
+
+  const handleRestoreMessage = useCallback(
+    async (target: UserMessage) => {
+      const idx = messagesRef.current.findIndex(m => m.uuid === target.uuid)
+      const sliced = idx >= 0 ? messagesRef.current.slice(0, idx) : []
+      setMessages(() => sliced)
+      engineRef.current?.setMessages(sliced)
+      const { text } = textForResubmit(target)
+      if (text) {
+        setInput(text)
+      }
+    },
+    [setMessages],
+  )
+
+  const handleSummarizeFrom = useCallback(
+    async (
+      target: UserMessage,
+      feedback?: string,
+      direction?: PartialCompactDirection,
+    ) => {
+      const cacheSafeParams = getLastCacheSafeParams()
+      if (!cacheSafeParams) {
+        throw new Error('No active session context available for summarization.')
+      }
+      const result = await partialCompactConversation(
+        messagesRef.current,
+        target,
+        {
+          abortController: new AbortController(),
+          messages: messagesRef.current,
+          readFileState: engineRef.current?.getReadFileState(),
+          getAppState: () => store.getState(),
+          setAppState,
+        },
+        cacheSafeParams,
+        { userFeedback: feedback, direction },
+      )
+      const next: Message[] = [
+        result.boundaryMarker,
+        ...result.summaryMessages,
+        ...(result.messagesToKeep ?? []),
+        ...result.attachments,
+        ...result.hookResults,
+      ]
+      setMessages(() => next)
+      engineRef.current?.setMessages(next)
+      appendSystemInfo('Summarized conversation segment.')
+    },
+    [setAppState, setMessages, store, appendSystemInfo],
+  )
+
   const overlayNode: React.ReactNode = pendingRequest ? (
     <PermissionRequest
       request={pendingRequest}
@@ -518,6 +620,16 @@ export function REPL({
     />
   ) : activeCommandOverlay ? (
     activeCommandOverlay
+  ) : activeModal === 'rewind' ? (
+    <MessageSelector
+      messages={messages}
+      onPreRestore={() => {}}
+      onRestoreCode={handleRestoreCode}
+      onRestoreMessage={handleRestoreMessage}
+      onSummarize={handleSummarizeFrom}
+      onClose={() => setActiveModal('none')}
+      width={Math.min(columns - 2, 78)}
+    />
   ) : activeModal === 'history' ? (
     <HistorySearchDialog
       entries={historyEntries}

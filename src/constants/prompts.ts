@@ -5,6 +5,7 @@
 
 import memoize from 'lodash-es/memoize.js'
 import { release, type as osType } from 'os'
+import { loadMemoryPrompt } from '../memdir/memdir.js'
 import type { McpServerConnection, Tool } from '../types/forward.js'
 import { shouldUseGlobalCacheScope } from '../utilities/betas.js'
 import { getCwd } from '../utilities/cwd.js'
@@ -216,6 +217,7 @@ export async function getSystemPrompt(
       }
       return `# Output Style: ${style}`
     }),
+    systemPromptSection('memory', () => loadMemoryPrompt()),
     dangerousUncachedSystemPromptSection(
       'mcp_instructions',
       () => {
