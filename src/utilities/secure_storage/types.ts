@@ -39,9 +39,10 @@ export interface SecureStorageData {
   claudeAiOauth?: StoredOauthTokens
   trustedDeviceToken?: string
   mcpOAuth?: Record<string, McpOauthEntry>
-  mcpOAuthClientConfig?: Record<string, { clientSecret?: string }>
+  mcpOAuthClientConfig?: Record<string, { clientId?: string; clientSecret?: string }>
   mcpXaaIdp?: Record<string, { idToken: string; expiresAt: number }>
   mcpXaaIdpConfig?: Record<string, { clientSecret: string }>
+  pluginSecrets?: Record<string, Record<string, string>>
 }
 
 export interface SecureStorageUpdateResult {

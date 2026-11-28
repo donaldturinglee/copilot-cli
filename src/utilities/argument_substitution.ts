@@ -53,3 +53,35 @@ export function substituteCommandArguments(
 
   return output
 }
+
+/**
+ * Substitutes `$ARGUMENTS`, `$ARGUMENTS[i]` (0-based), `$1..$N` (1-based) / `$0`,
+ * and named `$argName` / `${argName}` variables in skill markdown templates.
+ */
+export function substituteArguments(
+  content: string,
+  args: string,
+  appendIfNoPlaceholder = true,
+  argumentNames?: readonly string[],
+): string {
+  if (!appendIfNoPlaceholder) {
+    const parts = splitCommandArgs(args)
+    let out = content.replace(/\$ARGUMENTS\[(\d+)\]/g, (_, idxStr: string) => {
+      return parts[Number(idxStr)] ?? ''
+    })
+    out = out.replace(/\$ARGUMENTS\b/g, () => args)
+    out = out.replace(/\$(\d+)\b/g, (_, idxStr: string) => {
+      const idx = Number(idxStr)
+      return idx === 0 ? (parts[0] ?? '') : (parts[idx - 1] ?? '')
+    })
+    if (argumentNames?.length) {
+      for (let i = 0; i < argumentNames.length; i++) {
+        const name = argumentNames[i]!
+        const re = new RegExp(`\\$\\{${name}\\}|\\$${name}(?![\\[\\w])`, 'g')
+        out = out.replace(re, parts[i] ?? '')
+      }
+    }
+    return out
+  }
+  return substituteCommandArguments(content, args, argumentNames)
+}

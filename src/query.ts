@@ -58,7 +58,10 @@ import type {
 } from './types/message.js'
 import type { PermissionMode } from './types/permissions.js'
 import { appendSystemContext, prependUserContext } from './utilities/api.js'
-import { createAttachmentMessage } from './utilities/attachments.js'
+import {
+  createAttachmentMessage,
+  getAttachmentMessages,
+} from './utilities/attachments.js'
 import { saveCacheSafeParams } from './utilities/cache_safe_params.js'
 import { ESCALATED_MAX_TOKENS } from './utilities/context.js'
 import { logForDebugging } from './utilities/debug.js'
@@ -911,6 +914,30 @@ async function* queryLoop(
         turnCount: nextTurnCount,
       })
       return { reason: 'max_turns', turnCount: nextTurnCount }
+    }
+
+    if (!isBareMode()) {
+      const combinedBeforeAttachments = [
+        ...messagesForQuery,
+        ...assistantMessages,
+        ...toolResults,
+      ]
+      for await (const attMsg of getAttachmentMessages(
+        null,
+        updatedToolUseContext,
+        undefined,
+        [],
+        combinedBeforeAttachments,
+        params.querySource,
+        { mainLoopModel: updatedOptions.mainLoopModel },
+      )) {
+        yield attMsg
+        const normalizedAtt = normalizeMessagesForApi(
+          [attMsg],
+          updatedOptions.tools,
+        ).filter((m): m is UserMessage => m.type === 'user')
+        toolResults.push(...normalizedAtt)
+      }
     }
 
     queryCheckpoint('query_recursive_call')

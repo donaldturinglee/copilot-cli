@@ -16,15 +16,24 @@ import { addToTotalLinesChanged } from '../../bootstrap/state.js'
 import { DEFAULT_MAX_RESULT_SIZE_CHARS } from '../../constants/tool_limits.js'
 import { FILE_EDIT_TOOL_NAME } from '../../constants/tools.js'
 import { isTeamMemPath } from '../../memdir/team_mem_paths.js'
+import { clearDeliveredDiagnosticsForFile } from '../../services/lsp/lsp_diagnostic_registry.js'
+import { getLspServerManager } from '../../services/lsp/manager.js'
 import { checkTeamMemSecrets } from '../../services/team_memory_sync/team_mem_secret_guard.js'
 import { notifyTeamMemoryWrite } from '../../services/team_memory_sync/watcher.js'
+import {
+  activateConditionalSkillsForPaths,
+  addSkillDirectories,
+  discoverSkillDirsForPaths,
+} from '../../skills/load_skills_dir.js'
 import { buildTool, type ToolUseContext } from '../../tool.js'
 import { getEmptyToolPermissionContext } from '../../types/permissions.js'
 import { randomUUID } from '../../utilities/crypto.js'
+import { getCwd } from '../../utilities/cwd.js'
 import {
   countLinesChanged,
   getPatchFromContents,
 } from '../../utilities/diff.js'
+import { isEnvTruthy } from '../../utilities/env_utils.js'
 import { isEnoent } from '../../utilities/errors.js'
 import {
   detectFileEncoding,
@@ -350,6 +359,26 @@ export const FileEditTool = buildTool<FileEditInput, FileEditOutput>({
 
     if (isTeamMemPath(fullPath)) {
       notifyTeamMemoryWrite()
+    }
+
+    if (!isEnvTruthy(process.env.COPILOT_CLI_SIMPLE)) {
+      const cwd = getCwd()
+      const newDirs = await discoverSkillDirsForPaths([fullPath], cwd).catch(
+        () => [] as string[],
+      )
+      if (newDirs.length > 0) {
+        await addSkillDirectories(newDirs).catch(() => {})
+      }
+      activateConditionalSkillsForPaths([fullPath], cwd)
+    }
+
+    const lspManager = getLspServerManager()
+    if (lspManager) {
+      clearDeliveredDiagnosticsForFile(fullPath)
+      void lspManager
+        .changeFile(fullPath, updatedNormalized)
+        .then(() => lspManager.saveFile(fullPath, updatedNormalized))
+        .catch(() => {})
     }
 
     const newMtime = getFileModificationTime(fullPath)

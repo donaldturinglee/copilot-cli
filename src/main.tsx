@@ -5,10 +5,12 @@ import {
 } from '@commander-js/extra-typings'
 import { resolve } from 'path'
 import {
+  setAllowedChannels,
   setAllowedSettingSources,
   setChromeFlagOverride,
   setClientType,
   setFlagSettingsPath,
+  setHasDevChannels,
   setInlinePlugins,
   setIsInteractive,
   setQuestionPreviewFormat,
@@ -17,6 +19,7 @@ import {
   setSessionSource,
 } from './bootstrap/state.js'
 import { cliError } from './cli/exit.js'
+import { registerMcpXaaIdpCommand } from './commands/mcp/xaa_idp_command.js'
 import { init, initializeTelemetryAfterTrust } from './entrypoints/init.js'
 import { migrateAutoUpdatesToSettings } from './migrations/migrate_auto_updates_to_settings.js'
 import { migrateBypassPermissionsAcceptedToSettings } from './migrations/migrate_bypass_permissions_accepted_to_settings.js'
@@ -311,6 +314,113 @@ function registerSubcommands<
       process.stdout.write('Successfully logged out.\n')
       return
     }
+    if (name.startsWith('mcp:')) {
+      const mcpHandlers = await import('./cli/handlers/mcp.js')
+      switch (name) {
+        case 'mcp:serve': {
+          const opts = (args[0] as { debug?: boolean; verbose?: boolean } | undefined) ?? {}
+          await mcpHandlers.mcpServeHandler(opts)
+          return
+        }
+        case 'mcp:add': {
+          const serverName = String(args[0] ?? '')
+          const commandOrUrl = String(args[1] ?? '')
+          const extraArgs = Array.isArray(args[2]) ? (args[2] as string[]) : []
+          const opts = (args[3] as import('./commands/mcp/add_command.js').McpAddCliOptions | undefined) ?? {}
+          await mcpHandlers.mcpAddHandler(serverName, commandOrUrl, extraArgs, opts)
+          return
+        }
+        case 'mcp:remove': {
+          const serverName = String(args[0] ?? '')
+          const opts = (args[1] as { scope?: string } | undefined) ?? {}
+          await mcpHandlers.mcpRemoveHandler(serverName, opts)
+          return
+        }
+        case 'mcp:list':
+          await mcpHandlers.mcpListHandler()
+          return
+        case 'mcp:get':
+          await mcpHandlers.mcpGetHandler(String(args[0] ?? ''))
+          return
+        case 'mcp:add-json': {
+          const serverName = String(args[0] ?? '')
+          const json = String(args[1] ?? '')
+          const opts = (args[2] as { scope?: string; clientSecret?: string } | undefined) ?? {}
+          await mcpHandlers.mcpAddJsonHandler(serverName, json, opts)
+          return
+        }
+        case 'mcp:add-from-claude-desktop': {
+          const opts = (args[0] as { scope?: string } | undefined) ?? {}
+          await mcpHandlers.mcpAddFromDesktopHandler(opts)
+          return
+        }
+        case 'mcp:reset-project-choices':
+          await mcpHandlers.mcpResetProjectChoicesHandler()
+          return
+      }
+    }
+    if (name.startsWith('plugin:')) {
+      const pluginHandlers = await import('./cli/handlers/plugins.js')
+      switch (name) {
+        case 'plugin:validate':
+          await pluginHandlers.pluginValidateHandler(String(args[0] ?? ''))
+          return
+        case 'plugin:list':
+          await pluginHandlers.pluginListHandler(
+            (args[0] as { json?: boolean; available?: boolean } | undefined) ?? {},
+          )
+          return
+        case 'plugin:install':
+          await pluginHandlers.pluginInstallHandler(
+            String(args[0] ?? ''),
+            (args[1] as { scope?: string } | undefined) ?? {},
+          )
+          return
+        case 'plugin:uninstall':
+          await pluginHandlers.pluginUninstallHandler(
+            String(args[0] ?? ''),
+            (args[1] as { scope?: string; keepData?: boolean } | undefined) ?? {},
+          )
+          return
+        case 'plugin:enable':
+          await pluginHandlers.pluginEnableHandler(
+            String(args[0] ?? ''),
+            (args[1] as { scope?: string } | undefined) ?? {},
+          )
+          return
+        case 'plugin:disable':
+          await pluginHandlers.pluginDisableHandler(
+            typeof args[0] === 'string' ? args[0] : undefined,
+            (args[1] as { scope?: string; all?: boolean } | undefined) ?? {},
+          )
+          return
+        case 'plugin:update':
+          await pluginHandlers.pluginUpdateHandler(
+            String(args[0] ?? ''),
+            (args[1] as { scope?: string } | undefined) ?? {},
+          )
+          return
+        case 'plugin:marketplace:add':
+          await pluginHandlers.marketplaceAddHandler(
+            String(args[0] ?? ''),
+            (args[1] as { scope?: string; sparse?: string[] } | undefined) ?? {},
+          )
+          return
+        case 'plugin:marketplace:list':
+          await pluginHandlers.marketplaceListHandler(
+            (args[0] as { json?: boolean } | undefined) ?? {},
+          )
+          return
+        case 'plugin:marketplace:remove':
+          await pluginHandlers.marketplaceRemoveHandler(String(args[0] ?? ''))
+          return
+        case 'plugin:marketplace:update':
+          await pluginHandlers.marketplaceUpdateHandler(
+            typeof args[0] === 'string' ? args[0] : undefined,
+          )
+          return
+      }
+    }
     cliError(`Subcommand "${name}" is not implemented in this phase.`)
   }
 
@@ -365,7 +475,14 @@ function registerSubcommands<
   mcpCommand
     .command('add <name> <commandOrUrl> [args...]')
     .description('Add an MCP server')
-    .option('-s, --scope <scope>', 'Configuration scope')
+    .option('-s, --scope <scope>', 'Configuration scope (local, user, project)')
+    .option('-t, --transport <transport>', 'Transport type (stdio, sse, http)')
+    .option('-e, --env <env...>', 'Set environment variables (KEY=val)')
+    .option('-H, --header <header...>', 'Set HTTP headers (Key: Value)')
+    .option('--client-id <clientId>', 'OAuth client ID')
+    .option('--client-secret <secret>', 'OAuth client secret')
+    .option('--callback-port <port>', 'Fixed OAuth callback port', parsePositiveInteger)
+    .option('--xaa', 'Enable SEP-990 Enterprise Auth (XAA)')
     .action(dispatchSubcommand('mcp:add'))
   mcpCommand
     .command('remove <name>')
@@ -395,6 +512,7 @@ function registerSubcommands<
     .command('reset-project-choices')
     .description('Reset approved and rejected project-scoped MCP servers')
     .action(dispatchSubcommand('mcp:reset-project-choices'))
+  registerMcpXaaIdpCommand(mcpCommand)
 
   const pluginCommand = program
     .command('plugin')
@@ -414,24 +532,31 @@ function registerSubcommands<
     .command('install <plugin>')
     .alias('i')
     .description('Install a plugin')
+    .option('-s, --scope <scope>', 'Installation scope (user, project, local)')
     .action(dispatchSubcommand('plugin:install'))
   pluginCommand
     .command('uninstall <plugin>')
     .alias('remove')
     .alias('rm')
     .description('Uninstall a plugin')
+    .option('-s, --scope <scope>', 'Scope to uninstall from')
+    .option('--keep-data', 'Preserve persistent plugin data directory')
     .action(dispatchSubcommand('plugin:uninstall'))
   pluginCommand
     .command('enable <plugin>')
     .description('Enable a plugin')
+    .option('-s, --scope <scope>', 'Configuration scope')
     .action(dispatchSubcommand('plugin:enable'))
   pluginCommand
     .command('disable [plugin]')
     .description('Disable a plugin')
+    .option('-s, --scope <scope>', 'Configuration scope')
+    .option('-a, --all', 'Disable all enabled plugins')
     .action(dispatchSubcommand('plugin:disable'))
   pluginCommand
     .command('update <plugin>')
     .description('Update a plugin')
+    .option('-s, --scope <scope>', 'Configuration scope')
     .action(dispatchSubcommand('plugin:update'))
 
   const marketplaceCommand = pluginCommand
@@ -440,10 +565,13 @@ function registerSubcommands<
   marketplaceCommand
     .command('add <source>')
     .description('Add a plugin marketplace')
+    .option('-s, --scope <scope>', 'Configuration scope')
+    .option('--sparse <paths...>', 'Git sparse-checkout paths')
     .action(dispatchSubcommand('plugin:marketplace:add'))
   marketplaceCommand
     .command('list')
     .description('List plugin marketplaces')
+    .option('--json', 'Output JSON')
     .action(dispatchSubcommand('plugin:marketplace:list'))
   marketplaceCommand
     .command('remove <name>')
@@ -572,6 +700,15 @@ export function createCliProgram(argv: string[] = process.argv) {
     .option('--disallowedTools, --disallowed-tools <tools...>', 'Comma or space-separated list of tool names to deny')
     .option('--mcp-config <configs...>', 'Load MCP servers from JSON files or strings')
     .option('--strict-mcp-config', 'Only use MCP servers from --mcp-config', () => true)
+    .addOption(
+      new Option('--channels <entries...>', 'Approved MCP notification channels').hideHelp(),
+    )
+    .addOption(
+      new Option(
+        '--dangerously-load-development-channels <entries...>',
+        'Load unverified development MCP channels',
+      ).hideHelp(),
+    )
     .addOption(
       new Option('--permission-prompt-tool <tool>', 'MCP tool to use for permission prompts').hideHelp(),
     )
@@ -841,6 +978,40 @@ export function createCliProgram(argv: string[] = process.argv) {
       return
     }
 
+    if (!options.bare && !isBareMode()) {
+      const [{ initBundledSkills }, { initBuiltinPlugins }, { cleanupOrphanedPluginVersionsInBackground }, { initializeLspServerManager }, { parseChannelEntry }] =
+        await Promise.all([
+          import('./skills/bundled/index.js'),
+          import('./plugins/bundled/index.js'),
+          import('./utilities/plugins/cache_utils.js'),
+          import('./services/lsp/manager.js'),
+          import('./services/mcp/channel_allowlist.js'),
+        ])
+      initBundledSkills()
+      initBuiltinPlugins()
+      cleanupOrphanedPluginVersionsInBackground()
+      initializeLspServerManager()
+
+      const channelEntries = Array.isArray(options.channels)
+        ? (options.channels as string[])
+            .map(raw => parseChannelEntry(raw, false))
+            .filter((e): e is NonNullable<typeof e> => e !== null)
+        : []
+      const devChannelEntries = Array.isArray(
+        options.dangerouslyLoadDevelopmentChannels,
+      )
+        ? (options.dangerouslyLoadDevelopmentChannels as string[])
+            .map(raw => parseChannelEntry(raw, true))
+            .filter((e): e is NonNullable<typeof e> => e !== null)
+        : []
+      if (channelEntries.length > 0 || devChannelEntries.length > 0) {
+        setAllowedChannels([...channelEntries, ...devChannelEntries])
+        if (devChannelEntries.length > 0) {
+          setHasDevChannels(true)
+        }
+      }
+    }
+
     if (!prompt && !process.stdin.isTTY && isNonInteractive) {
       prompt = await readPipedStdin(inputFormat ?? 'text')
     }
@@ -919,6 +1090,10 @@ export function createCliProgram(argv: string[] = process.argv) {
         disallowedTools: Array.isArray(options.disallowedTools)
           ? (options.disallowedTools as string[])
           : undefined,
+        mcpConfig: Array.isArray(options.mcpConfig)
+          ? (options.mcpConfig as string[])
+          : undefined,
+        strictMcpConfig: Boolean(options.strictMcpConfig),
         continue: Boolean(options.continue),
         resume:
           typeof options.resume === 'string' || typeof options.resume === 'boolean'

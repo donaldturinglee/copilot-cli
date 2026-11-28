@@ -14,19 +14,26 @@ import { createCanUseTool } from '../hooks/tool_permission/use_can_use_tool.js'
 import { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
 import { drainPendingExtraction } from '../services/extract_memories/extract_memories.js'
+import type {
+  McpServerConnection,
+  ScopedMcpServerConfig,
+} from '../services/mcp/types.js'
 import {
   getDefaultAppState,
   type AppState,
 } from '../state/app_state_store.js'
 import { onChangeAppState } from '../state/on_change_app_state.js'
 import { createStore } from '../state/store.js'
+import type { AnyTool } from '../tool.js'
 import { assembleToolPool } from '../tools.js'
+import type { Command } from '../types/command.js'
 import type { Message } from '../types/message.js'
 import type { PermissionMode, ToolPermissionContext } from '../types/permissions.js'
 import { hasConsoleBillingAccess } from '../utilities/billing.js'
 import { loadConversationForResume } from '../utilities/conversation_recovery.js'
 import { getCwd } from '../utilities/cwd.js'
 import { parseEffortValue } from '../utilities/effort.js'
+import { isBareMode, isEnvTruthy } from '../utilities/env_utils.js'
 import {
   createEmptyFileHistoryState,
   fileHistoryRestoreStateFromLog,
@@ -73,6 +80,8 @@ export interface HeadlessRunOptions {
   tools?: string[]
   allowedTools?: string[]
   disallowedTools?: string[]
+  mcpConfig?: string[]
+  strictMcpConfig?: boolean
   continue?: boolean
   resume?: string | boolean
   forkSession?: boolean
@@ -258,9 +267,87 @@ export async function runHeadless(
     onChangeAppState,
   )
 
-  const assembledTools = assembleToolPool(store.getState().toolPermissionContext, [], {
-    ...(requestedTools !== undefined ? { allowedToolNames: requestedTools } : {}),
-  })
+  const skipExtensions =
+    isBareMode() || isEnvTruthy(process.env.COPILOT_CLI_SIMPLE)
+
+  let loadedCommands: Command[] = []
+  let mcpTools: AnyTool[] = []
+  let mcpCommands: Command[] = []
+  let mcpClients: McpServerConnection[] = []
+
+  if (!skipExtensions) {
+    const [
+      { initBundledSkills, getBundledSkillCommands },
+      { getSkillDirCommands },
+      { getPluginCommands },
+      { loadPluginHooks },
+    ] = await Promise.all([
+      import('../skills/bundled/index.js'),
+      import('../skills/load_skills_dir.js'),
+      import('../utilities/plugins/load_plugin_commands.js'),
+      import('../utilities/plugins/load_plugin_hooks.js'),
+    ])
+    initBundledSkills()
+    await loadPluginHooks().catch(() => 0)
+    const [diskSkills, pluginCmds] = await Promise.all([
+      getSkillDirCommands(getCwd()).catch(() => [] as Command[]),
+      getPluginCommands().catch(() => [] as Command[]),
+    ])
+    loadedCommands = [...getBundledSkillCommands(), ...diskSkills, ...pluginCmds]
+  }
+
+  if (
+    !skipExtensions ||
+    (options.mcpConfig && options.mcpConfig.length > 0)
+  ) {
+    const { getAllMcpConfigs, parseMcpConfigsFromCli } = await import(
+      '../services/mcp/config.js'
+    )
+    let targetConfigs: Record<string, ScopedMcpServerConfig> = {}
+    if (options.strictMcpConfig) {
+      if (options.mcpConfig && options.mcpConfig.length > 0) {
+        const parsedCli = parseMcpConfigsFromCli(options.mcpConfig)
+        targetConfigs = parsedCli.servers
+      }
+    } else {
+      const baseConfigs = await getAllMcpConfigs({ includeClaudeAi: false })
+      targetConfigs = { ...baseConfigs.servers }
+      if (options.mcpConfig && options.mcpConfig.length > 0) {
+        const parsedCli = parseMcpConfigsFromCli(options.mcpConfig)
+        Object.assign(targetConfigs, parsedCli.servers)
+      }
+    }
+
+    const serverEntries = Object.entries(targetConfigs)
+    if (serverEntries.length > 0) {
+      const { getMcpToolsCommandsAndResources } = await import(
+        '../services/mcp/client.js'
+      )
+      const mcpResult = await getMcpToolsCommandsAndResources(targetConfigs)
+      mcpClients = mcpResult.clients
+      mcpTools = mcpResult.tools
+      mcpCommands = mcpResult.commands
+      store.setState(prev => ({
+        ...prev,
+        mcp: {
+          ...prev.mcp,
+          clients: mcpClients as unknown as AppState['mcp']['clients'],
+          tools: mcpTools as unknown as AppState['mcp']['tools'],
+          commands: mcpCommands,
+          resources: mcpResult.resources as unknown as AppState['mcp']['resources'],
+        },
+      }))
+    }
+  }
+
+  const allCommands = [...loadedCommands, ...mcpCommands]
+  const assembledTools = assembleToolPool(
+    store.getState().toolPermissionContext,
+    mcpTools,
+    {
+      ...(requestedTools !== undefined ? { allowedToolNames: requestedTools } : {}),
+    },
+  )
 
   const canUseTool = createCanUseTool()
 
@@ -286,8 +373,8 @@ export async function runHeadless(
   const engine = new QueryEngine({
     cwd: getCwd(),
     tools: assembledTools,
-    commands: [],
-    mcpClients: [],
+    commands: allCommands,
+    mcpClients: mcpClients as unknown as readonly import('../types/forward.js').McpServerConnection[],
     canUseTool,
     getAppState: () => store.getState(),
     setAppState: updater => store.setState(updater),
@@ -426,6 +513,10 @@ export async function runHeadless(
   logHeadlessProfilerTurn()
   saveCurrentSessionCosts()
   await drainPendingExtraction()
+  if (mcpClients.length > 0) {
+    const { cleanupAllMcpClients } = await import('../services/mcp/client.js')
+    await cleanupAllMcpClients().catch(() => {})
+  }
   await flushSessionStorage()
 
   if (!options.skipExit) {

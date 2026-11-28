@@ -40,6 +40,8 @@ export function isEnvDefinedFalsy(
   return ['0', 'false', 'no', 'off'].includes(normalizedValue)
 }
 
+export const isEnvFalsy = isEnvDefinedFalsy
+
 export function isBareMode(): boolean {
   return (
     isEnvTruthy(process.env.COPILOT_CLI_SIMPLE) ||

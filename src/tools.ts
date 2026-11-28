@@ -26,8 +26,12 @@ import { FileReadTool } from './tools/file_read_tool/file_read_tool.js'
 import { FileWriteTool } from './tools/file_write_tool/file_write_tool.js'
 import { GlobTool } from './tools/glob_tool/glob_tool.js'
 import { GrepTool } from './tools/grep_tool/grep_tool.js'
+import { ListMcpResourcesTool } from './tools/list_mcp_resources_tool/list_mcp_resources_tool.js'
+import { LSPTool } from './tools/lsp_tool/lsp_tool.js'
 import { NotebookEditTool } from './tools/notebook_edit_tool/notebook_edit_tool.js'
 import { PowerShellTool } from './tools/power_shell_tool/power_shell_tool.js'
+import { ReadMcpResourceTool } from './tools/read_mcp_resource_tool/read_mcp_resource_tool.js'
+import { SkillTool } from './tools/skill_tool/skill_tool.js'
 import { TodoWriteTool } from './tools/todo_write_tool/todo_write_tool.js'
 import { ToolSearchTool } from './tools/tool_search_tool/tool_search_tool.js'
 import { WebFetchTool } from './tools/web_fetch_tool/web_fetch_tool.js'
@@ -70,6 +74,10 @@ const DEFAULT_BUILT_IN_TOOLS: AnyTool[] = [
   asAnyTool(TodoWriteTool),
   asAnyTool(BriefTool),
   asAnyTool(ConfigTool),
+  asAnyTool(SkillTool),
+  asAnyTool(LSPTool),
+  asAnyTool(ListMcpResourcesTool),
+  asAnyTool(ReadMcpResourceTool),
 ]
 
 let builtInToolsOverride: AnyTool[] | null = null

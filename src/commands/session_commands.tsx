@@ -7,6 +7,7 @@ import { ExportDialog } from '../components/export_dialog.js'
 import { MemoryFileSelector } from '../components/memory/memory_file_selector.js'
 import { ResumeConversation } from '../screens/resume_conversation.js'
 import { resetMicrocompactState } from '../services/compact/micro_compact.js'
+import { resetAllLspDiagnosticState } from '../services/lsp/lsp_diagnostic_registry.js'
 import { resetLastMemoryMessageUuid } from '../services/session_memory/session_memory.js'
 import { resetSessionMemoryState } from '../services/session_memory/session_memory_utils.js'
 import type { AppState } from '../state/app_state_store.js'
@@ -61,6 +62,7 @@ export const SESSION_COMMANDS: Command[] = [
       resetSessionMemoryState()
       resetLastMemoryMessageUuid()
       resetMicrocompactState()
+      resetAllLspDiagnosticState()
       getCommandRuntime(context).setAppState?.(prev => ({
         ...prev,
         fileHistory: createEmptyFileHistoryState(),

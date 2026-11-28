@@ -19,6 +19,14 @@ import { getLocalIsoDate } from '../constants/common.js'
 import type { QuerySource } from '../constants/query_source.js'
 import { findRelevantMemories } from '../memdir/find_relevant_memories.js'
 import { getAutoMemPath, isAutoMemoryEnabled } from '../memdir/paths.js'
+import {
+  checkForLspDiagnostics,
+  clearAllLspDiagnostics,
+} from '../services/lsp/lsp_diagnostic_registry.js'
+import type { DiagnosticFile } from '../services/lsp/types.js'
+import type { McpServerConnection } from '../services/mcp/types.js'
+import { formatCommandsWithinBudget } from '../tools/skill_tool/prompt.js'
+import type { Command } from '../types/command.js'
 import type { sideQuery } from './side_query.js'
 import type { ToolUseContext } from '../types/forward.js'
 import type {
@@ -39,6 +47,10 @@ import { randomUUID } from './crypto.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './env_utils.js'
+import {
+  getMcpInstructionsDelta,
+  type McpInstructionDeltaItem,
+} from './mcp_instructions_delta.js'
 import { getInitialSettings } from './settings/settings.js'
 import { hasUltrathinkKeyword, isUltrathinkEnabled } from './thinking.js'
 import { tokenCountFromLastApiResponse } from './tokens.js'
@@ -78,6 +90,21 @@ export type CoreAttachment =
   | {
       type: 'invoked_skills'
       skills: Array<{ name: string; path: string; content: string }>
+    }
+  | {
+      type: 'diagnostics'
+      files: DiagnosticFile[]
+      isNew: boolean
+    }
+  | {
+      type: 'skill_listing'
+      content: string
+      skillCount: number
+      isInitial: boolean
+    }
+  | {
+      type: 'mcp_instructions_delta'
+      servers: McpInstructionDeltaItem[]
     }
   | { type: 'task_status'; tasks: Array<{ id: string; subject: string; status: string }> }
   | { type: string; [key: string]: unknown }
@@ -466,6 +493,64 @@ export async function getAttachments(
               used,
               total: options.maxBudgetUsd,
               remaining: Math.max(0, options.maxBudgetUsd - used),
+            },
+          ]
+        }),
+        maybe('lsp_diagnostics', () => {
+          const batches = checkForLspDiagnostics()
+          const files = batches.flatMap(b => b.files)
+          if (files.length === 0) return []
+          clearAllLspDiagnostics()
+          return [{ type: 'diagnostics', files, isNew: true }]
+        }),
+        maybe('mcp_instructions_delta', () => {
+          const getAppStateFn =
+            typeof toolUseContext.getAppState === 'function'
+              ? (toolUseContext.getAppState as () => {
+                  mcp?: { clients?: readonly McpServerConnection[] }
+                })
+              : undefined
+          const rawClients =
+            (toolUseContext.options as { mcpClients?: readonly McpServerConnection[] } | undefined)
+              ?.mcpClients ??
+            getAppStateFn?.().mcp?.clients ??
+            []
+          if (rawClients.length === 0) return []
+          const delta = getMcpInstructionsDelta(rawClients, messages)
+          return delta.length > 0
+            ? [{ type: 'mcp_instructions_delta', servers: delta }]
+            : []
+        }),
+        maybe('skill_listing', () => {
+          const rawCommands = (
+            toolUseContext.options as { commands?: readonly Command[] } | undefined
+          )?.commands
+          const discovered = toolUseContext.discoveredSkillNames as
+            | Set<string>
+            | undefined
+          if (!rawCommands || rawCommands.length === 0 || !discovered) {
+            return []
+          }
+          const unseenSkills = rawCommands.filter(
+            cmd =>
+              cmd.type === 'prompt' &&
+              !cmd.disableModelInvocation &&
+              !cmd.isHidden &&
+              !discovered.has(cmd.name),
+          )
+          if (unseenSkills.length === 0) return []
+          const isInitial = discovered.size === 0
+          for (const s of unseenSkills) {
+            discovered.add(s.name)
+          }
+          const content = formatCommandsWithinBudget(unseenSkills)
+          if (!content.trim()) return []
+          return [
+            {
+              type: 'skill_listing',
+              content,
+              skillCount: unseenSkills.length,
+              isInitial,
             },
           ]
         }),

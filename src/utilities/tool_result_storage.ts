@@ -218,6 +218,62 @@ export function persistToolResult(
   return { filepath, originalSize }
 }
 
+const MIME_TO_EXTENSION: Readonly<Record<string, string>> = {
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/webm': 'webm',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'application/pdf': 'pdf',
+  'application/json': 'json',
+  'application/zip': 'zip',
+  'text/plain': 'txt',
+}
+
+/**
+ * Atomically persists binary MCP audio or resource blob payloads to the session
+ * `tool-results` directory with mode `0o600`.
+ */
+export async function persistBinaryContent(
+  data: Buffer,
+  mimeType: string,
+  nameHint?: string,
+): Promise<{ filepath: string; size: number } | { error: string }> {
+  try {
+    const dir = ensureToolResultsDir()
+    const cleanMime = mimeType.split(';')[0]?.trim().toLowerCase() ?? ''
+    const ext = MIME_TO_EXTENSION[cleanMime] ?? 'bin'
+    const safeHint = (nameHint ?? 'blob')
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 48)
+    const uniqueSuffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    const filepath = join(dir, `${safeHint}_${uniqueSuffix}.${ext}`)
+    const flags =
+      getPlatform() === 'windows'
+        ? fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY
+        : fsConstants.O_CREAT |
+          fsConstants.O_EXCL |
+          fsConstants.O_WRONLY |
+          (fsConstants.O_NOFOLLOW ?? 0)
+    const fd = openSync(filepath, flags, 0o600)
+    try {
+      writeSync(fd, data)
+    } finally {
+      closeSync(fd)
+    }
+    return { filepath, size: data.byteLength }
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
 export function isToolResultContentEmpty(
   content: ToolResultBlockParam['content'],
 ): boolean {

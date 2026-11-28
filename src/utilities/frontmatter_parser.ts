@@ -8,18 +8,21 @@ import { logForDebugging } from './debug.js'
 import { parseYaml } from './yaml.js'
 
 export type FrontmatterData = {
+  name?: string | null
   'allowed-tools'?: string | string[] | null
   description?: string | null
   type?: string | null
   'argument-hint'?: string | null
+  arguments?: string | string[] | null
   when_to_use?: string | null
   version?: string | null
-  'hide-from-slash-command-tool'?: string | null
+  'hide-from-slash-command-tool'?: string | boolean | null
+  'disable-model-invocation'?: string | boolean | null
   model?: string | null
-  skills?: string | null
-  'user-invocable'?: string | null
+  skills?: string | string[] | null
+  'user-invocable'?: string | boolean | null
   hooks?: HooksSettings | null
-  effort?: string | null
+  effort?: string | number | null
   context?: 'inline' | 'fork' | null
   agent?: string | null
   paths?: string | string[] | null

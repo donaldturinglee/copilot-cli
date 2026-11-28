@@ -20,11 +20,17 @@ import { z } from 'zod/v4'
 import { FILE_READ_TOOL_NAME } from '../../constants/tools.js'
 import { memoryFreshnessNote } from '../../memdir/memory_age.js'
 import { isAutoMemPath } from '../../memdir/paths.js'
+import {
+  activateConditionalSkillsForPaths,
+  addSkillDirectories,
+  discoverSkillDirsForPaths,
+} from '../../skills/load_skills_dir.js'
 import { buildTool, type ToolUseContext } from '../../tool.js'
 import type { ImageDimensions } from '../../types/forward.js'
 import type { NotebookCellSource } from '../../types/notebook.js'
 import { getEmptyToolPermissionContext } from '../../types/permissions.js'
 import { getCwd } from '../../utilities/cwd.js'
+import { isEnvTruthy } from '../../utilities/env_utils.js'
 import { isEnoent } from '../../utilities/errors.js'
 import {
   addLineNumbers,
@@ -312,6 +318,16 @@ export const FileReadTool = buildTool<FileReadInput, FileReadOutput>({
 
   async call(input, context: ToolUseContext) {
     const fullPath = expandPath(input.file_path)
+    if (!isEnvTruthy(process.env.COPILOT_CLI_SIMPLE)) {
+      const cwd = getCwd()
+      const newDirs = await discoverSkillDirsForPaths([fullPath], cwd).catch(
+        () => [] as string[],
+      )
+      if (newDirs.length > 0) {
+        await addSkillDirectories(newDirs).catch(() => {})
+      }
+      activateConditionalSkillsForPaths([fullPath], cwd)
+    }
     const ext = extname(fullPath).toLowerCase()
     const fsImpl = getFsImplementation()
     const stats = fsImpl.statSync(fullPath)

@@ -1,6 +1,8 @@
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
 import type { UUID } from 'crypto'
+import { join } from 'path'
 import type React from 'react'
+import { addInvokedSkill, getSessionId } from '../../bootstrap/state.js'
 import {
   type Command,
   getCommandName,
@@ -10,6 +12,7 @@ import {
 } from '../../types/command.js'
 import type { Message, SystemLocalCommandMessage } from '../../types/message.js'
 import { randomUUID } from '../crypto.js'
+import { registerSkillHooks } from '../hooks/register_skill_hooks.js'
 import { parseSlashCommand } from '../slash_command_parsing.js'
 import { recordSkillUsage } from '../suggestions/skill_usage_tracking.js'
 
@@ -80,6 +83,23 @@ export async function processSlashCommand(params: {
   }
 
   const resolvedName = getCommandName(cmd)
+  if (cmd.userInvocable === false) {
+    const text = `Skill "/${resolvedName}" cannot be invoked directly by users (user-invocable: false).`
+    const sysMsg: SystemLocalCommandMessage = {
+      type: 'system',
+      subtype: 'local_command',
+      content: text,
+      level: 'info',
+      uuid: randomUUID() as UUID,
+      timestamp: new Date().toISOString(),
+    }
+    return {
+      kind: 'local_text',
+      commandName: resolvedName,
+      text,
+      messages: [sysMsg],
+    }
+  }
   recordSkillUsage(resolvedName)
 
   if (cmd.type === 'local') {
@@ -121,6 +141,24 @@ export async function processSlashCommand(params: {
 
   // Prompt command
   const blocks = await cmd.getPromptForCommand(parsed.args, params.context)
+  const promptText = blocks
+    .filter((b): b is Extract<ContentBlockParam, { type: 'text' }> => b.type === 'text')
+    .map(b => b.text)
+    .join('\n\n')
+  if (promptText) {
+    const skillPath = cmd.skillRoot
+      ? join(cmd.skillRoot, 'SKILL.md')
+      : `skill:${resolvedName}`
+    addInvokedSkill(resolvedName, skillPath, promptText, null)
+  }
+  if (cmd.hooks && typeof params.context.setAppState === 'function') {
+    registerSkillHooks(
+      params.context.setAppState as Parameters<typeof registerSkillHooks>[0],
+      getSessionId(),
+      cmd.skillRoot ?? '',
+      cmd.hooks,
+    )
+  }
   return {
     kind: 'prompt',
     commandName: resolvedName,

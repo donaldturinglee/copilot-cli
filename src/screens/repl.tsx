@@ -7,13 +7,14 @@ import React, {
   useRef,
   useState,
 } from 'react'
-import { getAllCommands } from '../commands.js'
+import { getAllCommands, getCommands } from '../commands.js'
 import { useTheme } from '../components/design_system/theme_provider.js'
 import { ThemedText } from '../components/design_system/themed_text.js'
 import { FullscreenLayout } from '../components/fullscreen_layout.js'
 import { GlobalSearchDialog } from '../components/global_search_dialog.js'
 import { HistorySearchDialog } from '../components/history_search_dialog.js'
 import { LogoV2 } from '../components/logo_v2.js'
+import { ElicitationDialog } from '../components/mcp/elicitation_dialog.js'
 import {
   MessageSelector,
   textForResubmit,
@@ -34,7 +35,12 @@ import { useCanUseTool } from '../hooks/use_can_use_tool.js'
 import { useCancelRequest } from '../hooks/use_cancel_request.js'
 import { useCommandQueue } from '../hooks/use_command_queue.js'
 import { useFileHistorySnapshotInit } from '../hooks/use_file_history_snapshot_init.js'
+import { useLspPluginRecommendation } from '../hooks/use_lsp_plugin_recommendation.js'
 import { useMainLoopModel } from '../hooks/use_main_loop_model.js'
+import { useManagePlugins } from '../hooks/use_manage_plugins.js'
+import { useMergedCommands } from '../hooks/use_merged_commands.js'
+import { useMergedTools } from '../hooks/use_merged_tools.js'
+import { useSkillsChange } from '../hooks/use_skills_change.js'
 import { useTerminalSize } from '../hooks/use_terminal_size.js'
 import { Box } from '../ink/components/box.js'
 import type { ScrollBoxHandle } from '../ink/components/scroll_box.js'
@@ -49,12 +55,14 @@ import {
 import type { QueryEngine } from '../query_engine.js'
 import type { QueryDeps } from '../query/deps.js'
 import { partialCompactConversation } from '../services/compact/compact.js'
+import { MCPConnectionManager } from '../services/mcp/mcp_connection_manager.js'
 import {
   useAppState,
   useAppStateStore,
   useSetAppState,
 } from '../state/app_state.js'
 import type { Command } from '../types/command.js'
+import type { ElicitationRequestEvent } from '../types/forward.js'
 import type {
   AssistantMessage,
   Message,
@@ -126,16 +134,40 @@ export function REPL({
   const store = useAppStateStore()
   const setAppState = useSetAppState()
   const permissionMode = useAppState(s => s.toolPermissionContext.mode)
+  const mcpClients = useAppState(s => s.mcp.clients)
+  const elicitationQueue = useAppState(s => s.elicitation.queue)
   const verbose = useAppState(s => s.verbose)
   const effort = useAppState(s => s.effortValue)
   const fastMode = useAppState(s => s.fastMode)
   const statusLineCommand = useAppState(s => s.settings.statusLine?.command)
   const mainLoopModel = useMainLoopModel()
 
-  const commands = useMemo(
+  const [baseCommands, setBaseCommands] = useState<Command[]>(
     () => propCommands ?? getAllCommands(),
-    [propCommands],
   )
+  useEffect(() => {
+    if (propCommands) {
+      setBaseCommands(propCommands)
+      return
+    }
+    let cancelled = false
+    void getCommands(cwd).then(loaded => {
+      if (!cancelled) setBaseCommands(loaded)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [propCommands, cwd])
+
+  useManagePlugins(!skipHooks && process.env.NODE_ENV !== 'test')
+  useSkillsChange(
+    cwd,
+    setBaseCommands,
+    !skipHooks && process.env.NODE_ENV !== 'test',
+  )
+
+  const commands = useMergedCommands(baseCommands)
+  const mergedTools = useMergedTools()
   const fileEngine = useMemo(() => {
     const eng = propFileEngine ?? getSharedFileSuggestionEngine()
     if (!propFileEngine && eng.size() === 0) {
@@ -165,6 +197,13 @@ export function REPL({
       deps: queryDeps,
     })
   }
+
+  useEffect(() => {
+    if (externalEngine) return
+    engineRef.current?.setTools(mergedTools)
+    engineRef.current?.setCommands(commands)
+    engineRef.current?.setMcpClients(mcpClients)
+  }, [externalEngine, mergedTools, commands, mcpClients])
 
   const [messages, setMessagesState] = useState<Message[]>(() => [
     ...initialMessages,
@@ -207,6 +246,9 @@ export function REPL({
   useAwaySummary(messages, setMessages, isLoading, {
     enabled: !skipHooks && process.env.NODE_ENV !== 'test',
   })
+  const lspRecommendationOverlay = useLspPluginRecommendation(
+    !skipHooks && process.env.NODE_ENV !== 'test',
+  )
 
   const scrollRef = useRef<ScrollBoxHandle | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -541,9 +583,14 @@ export function REPL({
 
   const usedTokens = getTotalInputTokens() + getTotalOutputTokens()
   const contextWindow = 200_000
+  const activeElicitation = elicitationQueue[0] as
+    | ElicitationRequestEvent
+    | undefined
   const hasBlockingOverlay =
     Boolean(pendingRequest) ||
+    Boolean(activeElicitation) ||
     Boolean(activeCommandOverlay) ||
+    Boolean(lspRecommendationOverlay) ||
     activeModal !== 'none'
 
   const handleRestoreCode = useCallback(
@@ -618,8 +665,22 @@ export function REPL({
       width={Math.min(columns - 2, 78)}
       onResolve={resolvePendingRequest}
     />
+  ) : activeElicitation ? (
+    <ElicitationDialog
+      event={activeElicitation}
+      onDone={() => {
+        setAppState(prev => ({
+          ...prev,
+          elicitation: {
+            queue: prev.elicitation.queue.slice(1),
+          },
+        }))
+      }}
+    />
   ) : activeCommandOverlay ? (
     activeCommandOverlay
+  ) : lspRecommendationOverlay ? (
+    lspRecommendationOverlay
   ) : activeModal === 'rewind' ? (
     <MessageSelector
       messages={messages}
@@ -731,7 +792,12 @@ export function REPL({
   )
 
   return (
-    <>
+    <MCPConnectionManager
+      dynamicMcpConfig={
+        skipHooks || process.env.NODE_ENV === 'test' ? {} : undefined
+      }
+      strictMcpConfig={skipHooks || process.env.NODE_ENV === 'test'}
+    >
       <ScrollKeybindingHandler
         scrollRef={scrollRef}
         viewportHeight={viewportHeight}
@@ -749,6 +815,6 @@ export function REPL({
         bottom={bottomSlot}
         overlay={overlayNode}
       />
-    </>
+    </MCPConnectionManager>
   )
 }

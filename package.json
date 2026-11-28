@@ -12,7 +12,7 @@
   },
   "scripts": {
     "dev": "bun run src/entrypoints/cli.tsx",
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "bun ./node_modules/typescript/bin/tsc --noEmit",
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
@@ -20,9 +20,11 @@
   },
   "dependencies": {
     "@alcalzone/ansi-tokenize": "^0.4.0",
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@anthropic-ai/sandbox-runtime": "^0.0.83",
     "@anthropic-ai/sdk": "^0.52.0",
     "@commander-js/extra-typings": "^14.0.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "ajv": "^8.20.0",
     "axios": "^1.8.4",
     "chalk": "^5.4.1",
@@ -31,6 +33,7 @@
     "diff": "^9.0.0",
     "env-paths": "^3.0.0",
     "execa": "^9.5.2",
+    "fflate": "^0.8.3",
     "highlight.js": "^11.12.0",
     "https-proxy-agent": "^7.0.6",
     "ignore": "^7.0.17",
@@ -38,6 +41,7 @@
     "lodash-es": "^4.17.21",
     "lru-cache": "^11.1.0",
     "marked": "^18.3.0",
+    "p-map": "^7.1.1",
     "picomatch": "^4.0.7",
     "proper-lockfile": "^4.1.2",
     "react": "^19.1.0",
@@ -48,6 +52,8 @@
     "tree-kill": "^1.2.2",
     "turndown": "^7.2.5",
     "undici": "^7.8.0",
+    "ws": "^8.23.1",
+    "xss": "^1.0.17",
     "yaml": "^2.7.0",
     "zod": "^4.0.0"
   },
@@ -63,6 +69,7 @@
     "@types/semver": "^7.5.8",
     "@types/shell-quote": "^1.7.5",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.2",
     "typescript": "^5.8.0"
   }
 }

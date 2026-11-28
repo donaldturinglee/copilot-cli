@@ -367,7 +367,7 @@ export async function hasPermissionsToUseTool(
   tool: AnyTool,
   input: Record<string, unknown>,
   context: ToolUseContext,
-  _assistantMessage: AssistantMessage,
+  _assistantMessage: AssistantMessage | undefined,
   toolUseId: string,
 ): Promise<PermissionDecision<Record<string, unknown>>> {
   const appState = context.getAppState?.()

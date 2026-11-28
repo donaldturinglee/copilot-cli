@@ -6,16 +6,20 @@ import {
 import { getCwd } from '../utilities/cwd.js'
 import { getClaudeConfigHomeDir } from '../utilities/env_utils.js'
 import { loadMarkdownConfigDir } from '../utilities/markdown_config_loader.js'
+import { getCachedPluginOutputStyles } from '../utilities/plugins/load_plugin_output_styles.js'
 
 /**
  * Load built-in output styles merged with custom Markdown definitions from
- * `~/.copilot/output-styles/*.md` and `<cwd>/.copilot/output-styles/*.md`.
+ * enabled plugins, `~/.copilot/output-styles/*.md`, and `<cwd>/.copilot/output-styles/*.md`.
  */
 export function loadOutputStyles(options?: {
   userConfigDir?: string
   projectDir?: string
 }): Record<string, OutputStyleConfig> {
-  const styles: Record<string, OutputStyleConfig> = { ...BUILTIN_OUTPUT_STYLES }
+  const styles: Record<string, OutputStyleConfig> = {
+    ...BUILTIN_OUTPUT_STYLES,
+    ...getCachedPluginOutputStyles(),
+  }
 
   const userDir = join(
     options?.userConfigDir ?? getClaudeConfigHomeDir(),

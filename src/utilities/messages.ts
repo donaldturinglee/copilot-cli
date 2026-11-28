@@ -927,6 +927,69 @@ export function normalizeAttachmentForApi(
         }),
       ]
     }
+    case 'diagnostics': {
+      const files = Array.isArray(typed.files)
+        ? (typed.files as Array<{
+            uri: string
+            diagnostics: Array<{
+              severity: string
+              message: string
+              range: { start: { line: number; character: number } }
+              source?: string
+              code?: string | number
+            }>
+          }>)
+        : []
+      if (files.length === 0) return []
+      const formattedFiles = files
+        .map(f => {
+          const lines = f.diagnostics.map(d => {
+            const loc = `${d.range.start.line + 1}:${d.range.start.character + 1}`
+            const src = d.source ? ` [${d.source}${d.code !== undefined ? `(${d.code})` : ''}]` : ''
+            return `  [${d.severity}] ${loc}${src}: ${d.message}`
+          })
+          return `${f.uri}:\n${lines.join('\n')}`
+        })
+        .join('\n\n')
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(
+            `<new-diagnostics>The following new diagnostic issues were detected:\n\n${formattedFiles}</new-diagnostics>`,
+          ),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'skill_listing': {
+      const content = typeof typed.content === 'string' ? typed.content.trim() : ''
+      if (!content) return []
+      const header = typed.isInitial
+        ? 'The following skills are available for use with the Skill tool:'
+        : 'Newly discovered skills available for use with the Skill tool:'
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(`${header}\n\n${content}`),
+          isMeta: true,
+        }),
+      ]
+    }
+    case 'mcp_instructions_delta': {
+      const servers = Array.isArray(typed.servers)
+        ? (typed.servers as Array<{ serverName: string; instructions: string }>)
+        : []
+      if (servers.length === 0) return []
+      const blocks = servers
+        .map(s => `## MCP Server: ${s.serverName}\n${s.instructions}`)
+        .join('\n\n')
+      return [
+        createUserMessage({
+          content: wrapInSystemReminder(
+            `Instructions from newly connected MCP servers:\n\n${blocks}`,
+          ),
+          isMeta: true,
+        }),
+      ]
+    }
     case 'task_status': {
       const tasks = Array.isArray(typed.tasks)
         ? (typed.tasks as Array<{ id: string; subject: string; status: string }>)

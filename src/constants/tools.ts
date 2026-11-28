@@ -22,6 +22,11 @@ export const TODO_WRITE_TOOL_NAME = 'TodoWrite'
 export const SYNTHETIC_OUTPUT_TOOL_NAME = 'StructuredOutput'
 export const BRIEF_TOOL_NAME = 'SendUserMessage'
 export const CONFIG_TOOL_NAME = 'Config'
+export const SKILL_TOOL_NAME = 'Skill'
+export const LSP_TOOL_NAME = 'LSP'
+export const MCP_TOOL_NAME = 'MCP'
+export const LIST_MCP_RESOURCES_TOOL_NAME = 'ListMcpResourcesTool'
+export const READ_MCP_RESOURCE_TOOL_NAME = 'ReadMcpResourceTool'
 
 export const ALL_AGENT_DISALLOWED_TOOLS: ReadonlySet<string> = new Set([
   ENTER_PLAN_MODE_TOOL_NAME,

@@ -70,3 +70,38 @@ export function transitionPermissionMode(
     prePlanMode: nextPrePlanMode,
   }
 }
+
+/**
+ * Splits CLI / frontmatter tool rule entries on commas or whitespace outside
+ * balanced parentheses (preserving rules such as `Bash(git status:*)`).
+ */
+export function parseToolListFromCli(tools: readonly string[]): string[] {
+  const result: string[] = []
+  for (const raw of tools) {
+    let current = ''
+    let depth = 0
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i]!
+      if (ch === '(') {
+        depth++
+        current += ch
+      } else if (ch === ')' && depth > 0) {
+        depth--
+        current += ch
+      } else if (depth === 0 && (ch === ',' || /\s/.test(ch))) {
+        const trimmed = current.trim()
+        if (trimmed) {
+          result.push(trimmed)
+        }
+        current = ''
+      } else {
+        current += ch
+      }
+    }
+    const trailing = current.trim()
+    if (trailing) {
+      result.push(trailing)
+    }
+  }
+  return result
+}

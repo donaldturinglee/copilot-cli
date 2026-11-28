@@ -194,6 +194,30 @@ export class QueryEngine {
    */
   setMessages(messages: readonly Message[]): void {
     this.mutableMessages = [...messages]
+    if (messages.length === 0) {
+      this.discoveredSkillNames.clear()
+    }
+  }
+
+  /**
+   * Updates the active assembled tool pool (e.g. after MCP/plugin hot-reload).
+   */
+  setTools(tools: readonly Tool[]): void {
+    this.config.tools = tools
+  }
+
+  /**
+   * Updates the active command/skill registry (e.g. after skill/plugin hot-reload).
+   */
+  setCommands(commands: readonly Command[]): void {
+    this.config.commands = commands
+  }
+
+  /**
+   * Updates the active MCP server connections.
+   */
+  setMcpClients(mcpClients: readonly McpServerConnection[]): void {
+    this.config.mcpClients = mcpClients
   }
 
   /**
@@ -227,7 +251,6 @@ export class QueryEngine {
   ): AsyncGenerator<SdkMessage, void> {
     ensurePhase4HooksBootstrapped()
     headlessProfilerStartTurn()
-    this.discoveredSkillNames.clear()
     setCwdState(this.config.cwd)
     if (this.config.additionalDirectories?.length) {
       setAdditionalDirectoriesForClaudeMd(this.config.additionalDirectories)
@@ -419,6 +442,8 @@ export class QueryEngine {
       options: {
         mainLoopModel,
         tools: effectiveTools,
+        commands: this.config.commands,
+        mcpClients: this.config.mcpClients,
         thinkingConfig,
         isNonInteractiveSession: this.config.isNonInteractiveSession ?? true,
         hasAppendSystemPrompt: Boolean(effectiveAppendSystemPrompt),

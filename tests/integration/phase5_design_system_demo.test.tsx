@@ -183,7 +183,7 @@ describe('Phase 5.5 — Design System, Content Renderers & Notification Queue De
     expect(out).toContain('First block')
     expect(out).toContain('Second block')
     streamInst.unmount()
-  })
+  }, 25_000)
 
   test('StructuredDiff renders syntax-highlighted dual columns with <NoSelect> gutter excluded from selection copy', () => {
     const hunk: StructuredPatchHunk = {

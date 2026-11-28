@@ -15,6 +15,7 @@
  */
 
 import { spawn } from 'child_process'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import {
   addToTurnHookDuration,
@@ -75,6 +76,11 @@ import {
   getSessionHooks,
   type RegisteredSessionHook,
 } from './hooks/session_hooks.js'
+import { getPluginDataDir } from './plugins/plugin_directories.js'
+import {
+  loadPluginOptions,
+  substituteUserConfigInContent,
+} from './plugins/plugin_options_storage.js'
 import { findSuitableShell, exec as execShell } from './shell.js'
 import { findPowerShell } from './shell/powershell_detection.js'
 import { jsonParse, jsonStringify } from './slow_operations.js'
@@ -350,6 +356,38 @@ function resolveCommandShell(hook: BashCommandHook): {
  * blocking semantics, optional `async`/`asyncRewake` background execution via
  * `AsyncHookRegistry`, and interactive `PromptRequest` stdin/stdout elicitation.
  */
+function substituteHookVariables(
+  raw: string,
+  meta?: {
+    pluginRoot?: string
+    pluginId?: string
+    skillRoot?: string
+  },
+): string {
+  let out = raw
+  if (meta?.pluginRoot) {
+    out = out
+      .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, meta.pluginRoot)
+      .replace(/\$\{COPILOT_PLUGIN_ROOT\}/g, meta.pluginRoot)
+  }
+  if (meta?.pluginId) {
+    const dataDir = getPluginDataDir(meta.pluginId)
+    out = out
+      .replace(/\$\{CLAUDE_PLUGIN_DATA\}/g, dataDir)
+      .replace(/\$\{COPILOT_PLUGIN_DATA\}/g, dataDir)
+    const opts = loadPluginOptions(meta.pluginId)
+    if (Object.keys(opts).length > 0) {
+      out = substituteUserConfigInContent(out, opts)
+    }
+  }
+  if (meta?.skillRoot) {
+    out = out
+      .replace(/\$\{CLAUDE_SKILL_DIR\}/g, meta.skillRoot)
+      .replace(/\$\{COPILOT_SKILL_DIR\}/g, meta.skillRoot)
+  }
+  return out
+}
+
 async function execCommandHook(
   hook: BashCommandHook,
   hookEvent: HookEvent,
@@ -357,26 +395,66 @@ async function execCommandHook(
   jsonInput: string,
   toolName: string | undefined,
   signal?: AbortSignal,
+  hookMeta?: {
+    pluginRoot?: string
+    pluginId?: string
+    skillRoot?: string
+  },
 ): Promise<HookResult> {
+  if (hookMeta?.pluginRoot && !existsSync(hookMeta.pluginRoot)) {
+    logForDebugging(
+      `Skipping command hook "${hookName}" because plugin root no longer exists: ${hookMeta.pluginRoot}`,
+    )
+    return { outcome: 'success' }
+  }
+
+  const expandedCommand = substituteHookVariables(hook.command, hookMeta)
+  const effectiveHook: BashCommandHook =
+    expandedCommand === hook.command ? hook : { ...hook, command: expandedCommand }
+  const pluginDataDir = hookMeta?.pluginId
+    ? getPluginDataDir(hookMeta.pluginId)
+    : undefined
+  const extraHookEnv: Record<string, string> = {
+    ...(hookMeta?.pluginRoot
+      ? {
+          CLAUDE_PLUGIN_ROOT: hookMeta.pluginRoot,
+          COPILOT_PLUGIN_ROOT: hookMeta.pluginRoot,
+        }
+      : {}),
+    ...(pluginDataDir
+      ? {
+          CLAUDE_PLUGIN_DATA: pluginDataDir,
+          COPILOT_PLUGIN_DATA: pluginDataDir,
+        }
+      : {}),
+    ...(hookMeta?.skillRoot
+      ? {
+          CLAUDE_SKILL_DIR: hookMeta.skillRoot,
+          COPILOT_SKILL_DIR: hookMeta.skillRoot,
+        }
+      : {}),
+  }
+
   const hookId = randomUUID()
   emitHookStarted({ hookId, hookName, hookEvent })
 
   // Async background command hook (`async: true` or `asyncRewake: true`)
-  if (hook.async || hook.asyncRewake) {
-    const shellKind = hook.shell === 'powershell' ? 'powershell' : 'bash'
+  if (effectiveHook.async || effectiveHook.asyncRewake) {
+    const shellKind = effectiveHook.shell === 'powershell' ? 'powershell' : 'bash'
     const escapedInput = jsonInput.replace(/'/g, "'\\''")
     const wrappedCommand =
       shellKind === 'powershell'
-        ? `$inputJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${Buffer.from(jsonInput, 'utf8').toString('base64')}')); $inputJson | & { ${hook.command} }`
-        : `printf '%s' '${escapedInput}' | (${hook.command})`
+        ? `$inputJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${Buffer.from(jsonInput, 'utf8').toString('base64')}')); $inputJson | & { ${effectiveHook.command} }`
+        : `printf '%s' '${escapedInput}' | (${effectiveHook.command})`
 
     let taskIdRef = ''
     let earlyExitResult: import('./shell_command.js').ExecResult | undefined
 
     const shellCmd = await execShell(wrappedCommand, signal, shellKind, {
       cwd: getCwd(),
+      env: extraHookEnv,
       runInBackground: true,
-      timeoutMs: (hook.timeout ?? 60) * 1000,
+      timeoutMs: (effectiveHook.timeout ?? 60) * 1000,
       onBackgroundExit: result => {
         if (taskIdRef) {
           completePendingAsyncHook(taskIdRef, result)
@@ -392,14 +470,14 @@ async function execCommandHook(
       hookId,
       asyncResponse: {
         async: true,
-        asyncTimeout: (hook.timeout ?? 60) * 1000,
+        asyncTimeout: (effectiveHook.timeout ?? 60) * 1000,
       },
       hookName,
       hookEvent,
-      command: hook.command,
+      command: effectiveHook.command,
       shellCommand: shellCmd,
       toolName,
-      asyncRewake: hook.asyncRewake,
+      asyncRewake: effectiveHook.asyncRewake,
     })
 
     if (earlyExitResult) {
@@ -409,7 +487,7 @@ async function execCommandHook(
     return { outcome: 'success' }
   }
 
-  const shellSpec = resolveCommandShell(hook)
+  const shellSpec = resolveCommandShell(effectiveHook)
   if (!shellSpec) {
     return {
       outcome: 'non_blocking_error',
@@ -417,8 +495,8 @@ async function execCommandHook(
     }
   }
 
-  const timeoutMs = hook.timeout
-    ? hook.timeout * 1000
+  const timeoutMs = effectiveHook.timeout
+    ? effectiveHook.timeout * 1000
     : DEFAULT_COMMAND_HOOK_TIMEOUT_MS
   const { signal: combinedSignal, cleanup } = createCombinedAbortSignal(signal, {
     timeoutMs,
@@ -431,6 +509,7 @@ async function execCommandHook(
         ...process.env,
         COPILOT_CLI_PROJECT_DIR: getCwd(),
         COPILOT_CLI_HOOK_EVENT: hookEvent,
+        ...extraHookEnv,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -621,6 +700,9 @@ interface ResolvedHookCandidate {
   matcher?: string
   isManaged: boolean
   label: string
+  pluginRoot?: string
+  pluginId?: string
+  skillRoot?: string
   onHookSuccess?: () => void
 }
 
@@ -738,6 +820,13 @@ function collectMatchingHooks(
   if (registered) {
     for (const matcherEntry of registered) {
       if (!matchesHookMatcher(matcherEntry.matcher, target)) continue
+      const pluginRoot =
+        'pluginRoot' in matcherEntry ? matcherEntry.pluginRoot : undefined
+      const pluginId =
+        'pluginId' in matcherEntry ? matcherEntry.pluginId : undefined
+      if (pluginRoot && (managedOnly || skipUntrusted)) {
+        continue
+      }
       for (const rawHook of matcherEntry.hooks) {
         if (typeof rawHook === 'function') {
           const cbHook: HookCallback = {
@@ -751,6 +840,8 @@ function collectMatchingHooks(
             matcher: matcherEntry.matcher,
             isManaged: Boolean(cbHook.internal),
             label: `callback:${event}`,
+            ...(pluginRoot ? { pluginRoot } : {}),
+            ...(pluginId ? { pluginId } : {}),
           })
         } else if (rawHook && typeof rawHook === 'object' && 'type' in rawHook) {
           const typed = rawHook as ExecutableHook
@@ -763,6 +854,8 @@ function collectMatchingHooks(
             matcher: matcherEntry.matcher,
             isManaged: typed.type === 'callback' && Boolean(typed.internal),
             label: `${typed.type}:${event}`,
+            ...(pluginRoot ? { pluginRoot } : {}),
+            ...(pluginId ? { pluginId } : {}),
           })
         }
       }
@@ -789,6 +882,7 @@ function collectMatchingHooks(
               : h.type === 'prompt' || h.type === 'agent'
                 ? h.prompt.slice(0, 60)
                 : `${h.type}:${event}`,
+        ...(rec.skillRoot ? { skillRoot: rec.skillRoot } : {}),
         onHookSuccess: rec.onHookSuccess,
       })
     }
@@ -834,6 +928,11 @@ async function executeSingleHook(
           jsonInput,
           toolName,
           options?.signal,
+          {
+            pluginRoot: candidate.pluginRoot,
+            pluginId: candidate.pluginId,
+            skillRoot: candidate.skillRoot,
+          },
         )
         break
 
